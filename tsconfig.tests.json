@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@routebook/rinf-client/compact": ["packages/rinf-client/src/compact.ts"],
+      "@routebook/*": ["packages/*/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/test/**/*.ts", "apps/*/test/**/*.ts"]
+}

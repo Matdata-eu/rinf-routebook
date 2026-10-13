@@ -2,14 +2,15 @@
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { SparqlClient, countryGraph, fetchSnapshot, loadSnapshot, saveSnapshot } from "@routebook/rinf-client";
+import { SparqlClient, countryGraph, fetchSnapshot, loadSnapshot, saveSnapshot, saveWebBundle } from "@routebook/rinf-client";
 import { RoutingGraph, lengthCostModel, opEndpoint, resolveOp, trackPreferenceCostModel } from "@routebook/routing";
 import { RoutebookIndex, buildRoutebook, formatRoutebook } from "@routebook/routebook";
 
 const HELP = `routebook <command> [options]
 
 Commands:
-  fetch                     Fetch a RINF snapshot from the ERA SPARQL endpoint
+  fetch                     Fetch a RINF snapshot from the ERA SPARQL endpoint (also writes the web bundle)
+  bundle                    Rebuild the compact web bundle (data/web/<country>) from the snapshot
   route <from> <to>         Route between two OPs (name, uopid or IRI) and print the routebook
   stats                     Topology statistics of the snapshot
 
@@ -48,6 +49,7 @@ async function main() {
   }
   const country = countryGraph(values.country!);
   const dir = values.snapshot ? resolve(values.snapshot) : join(ROOT, "data", "snapshots", country.code.toLowerCase());
+  const webDir = join(ROOT, "data", "web", country.code.toLowerCase());
 
   if (cmd === "fetch") {
     const client = new SparqlClient({ graph: country.graph, ...(values.endpoint ? { endpoint: values.endpoint } : {}) });
@@ -59,7 +61,8 @@ async function main() {
       onProgress: (step, rows) => console.error(`  ${step.padEnd(16)} ${rows} rows`),
     });
     await saveSnapshot(dir, snapshot);
-    console.error(`Saved to ${dir} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    await saveWebBundle(webDir, snapshot);
+    console.error(`Saved to ${dir} and ${webDir} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     console.log(JSON.stringify(snapshot.meta.counts));
     return;
   }
@@ -67,6 +70,12 @@ async function main() {
   const snapshot = await loadSnapshot(dir).catch((e: unknown) => {
     throw new Error(`Cannot load snapshot from ${dir} (run "routebook fetch" first): ${String(e)}`);
   });
+  if (cmd === "bundle") {
+    await saveWebBundle(webDir, snapshot);
+    console.error(`Web bundle written to ${webDir}`);
+    return;
+  }
+
   const graph = new RoutingGraph(snapshot.topology);
 
   if (cmd === "stats") {

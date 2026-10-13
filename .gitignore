@@ -5,6 +5,7 @@ coverage/
 .vite/
 # fetched RINF snapshots (regenerate with `pnpm fetch:nor`)
 data/snapshots/
+data/web/
 # local scratch
 *.log
 .env

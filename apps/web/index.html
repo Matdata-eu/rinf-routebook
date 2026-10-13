@@ -3,16 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Open-source railway routebook built on ERA RINF data" />
     <title>Routebook</title>
-    <style>
-      html, body, #map { margin: 0; height: 100%; }
-      body { font-family: system-ui, sans-serif; }
-      #status { position: absolute; top: 8px; left: 8px; z-index: 1; background: #fffc; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
-    </style>
   </head>
-  <body>
-    <div id="status">Loading snapshot…</div>
-    <div id="map"></div>
+  <body data-state="loading">
+    <header class="topbar">
+      <h1 class="brand">Routebook</h1>
+      <form class="picker" autocomplete="off" onsubmit="return false">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="search" placeholder="Station or code, e.g. Oslo S" spellcheck="false" />
+        </div>
+        <button id="swap" type="button" class="btn icon" title="Swap origin and destination" aria-label="Swap origin and destination">⇅</button>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="search" placeholder="e.g. Drammen" spellcheck="false" />
+        </div>
+        <button id="clear" type="button" class="btn" title="Clear route">Clear</button>
+      </form>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </header>
+    <main class="layout">
+      <div id="map" class="map" aria-label="Map"></div>
+      <aside class="panel">
+        <details class="filters-box">
+          <summary>Show in routebook</summary>
+          <div id="filters" class="filters"></div>
+        </details>
+        <section id="routebook" class="routebook"></section>
+        <footer class="panel-foot"><span id="meta"></span> · RINF data © European Union Agency for Railways, provided by Bane NOR · Open source (MIT)</footer>
+      </aside>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

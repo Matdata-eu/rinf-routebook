@@ -27,7 +27,26 @@ const kmOf = (km?: string, offKm?: string, lrs?: string): Partial<KmPosition> =>
   return pos;
 };
 
+/** Some labels arrive CSV-escaped, e.g. `"Signal 75A ""Kilometerskilt"""`. */
+export function cleanLabel(label: string | undefined): string | undefined {
+  if (label === undefined) return undefined;
+  let l = label.trim();
+  if (l.length >= 2 && l.startsWith('"') && l.endsWith('"')) l = l.slice(1, -1);
+  l = l.replace(/""/g, '"').trim();
+  return l || undefined;
+}
+
 const round = (n: number, d: number) => Math.round(n * 10 ** d) / 10 ** d;
+
+/** Parse a WKT LINESTRING (optionally prefixed with a CRS IRI) into [lon, lat] pairs. */
+export function parseWktLineString(wkt: string | undefined): Array<[number, number]> | undefined {
+  const m = wkt?.match(/LINESTRING\s*\(([^)]*)\)/i);
+  if (!m) return undefined;
+  return m[1]!.split(",").map((p) => {
+    const [x, y] = p.trim().split(/\s+/).map(Number);
+    return [x!, y!] as [number, number];
+  });
+}
 
 export function parseWktPoint(wkt: string | undefined): { lon: number; lat: number } | undefined {
   const m = wkt?.match(/POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)/i);
@@ -75,13 +94,14 @@ export async function fetchSnapshot({ client, country, onProgress }: FetchSnapsh
     features: await run("features"),
     tunnels: await run("tunnels"),
     tunnelAreas: await run("tunnel-areas"),
+    geometry: await run("netelement-geometry"),
   };
   return assembleSnapshot(r, { endpoint: client.endpoint, graph: client.graph, country });
 }
 
 export type RawResults = Record<
   | "ops" | "opAreas" | "opPoints" | "lines" | "sols" | "netelements" | "netrelations"
-  | "tracks" | "trackElements" | "trackParents" | "features" | "tunnels" | "tunnelAreas",
+  | "tracks" | "trackElements" | "trackParents" | "features" | "tunnels" | "tunnelAreas" | "geometry",
   Row[]
 >;
 
@@ -188,7 +208,7 @@ export function assembleSnapshot(
       kind,
       ne: row.ne,
       offset,
-      ...(row.label ? { label: row.label } : {}),
+      ...(cleanLabel(row.label) ? { label: cleanLabel(row.label)! } : {}),
       ...(row.signalType ? { signalType: row.signalType } : {}),
       ...(direction ? { direction } : {}),
       ...kmOf(row.km, row.offKm, row.lrs),
@@ -218,6 +238,12 @@ export function assembleSnapshot(
     t.areas.push({ ne: row.ne, start: Math.min(start, end), end: Math.max(start, end) });
   }
 
+  const geometry: Record<string, Array<[number, number]>> = {};
+  for (const row of r.geometry ?? []) {
+    const coords = parseWktLineString(row.wkt);
+    if (row.e && coords && netElements.has(row.e)) geometry[row.e] = coords;
+  }
+
   const snapshot: Snapshot = {
     meta: { ...meta, fetchedAt: new Date().toISOString(), counts: {} },
     ops: [...ops.values()],
@@ -230,6 +256,7 @@ export function assembleSnapshot(
     tracks: [...tracks.values()],
     features: [...features.values()],
     tunnels: [...tunnels.values()],
+    geometry,
   };
   snapshot.meta.counts = {
     ops: snapshot.ops.length,
@@ -240,6 +267,7 @@ export function assembleSnapshot(
     tracks: snapshot.tracks.length,
     features: snapshot.features.length,
     tunnels: snapshot.tunnels.length,
+    geometries: Object.keys(geometry).length,
   };
   return snapshot;
 }

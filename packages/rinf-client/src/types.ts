@@ -132,4 +132,6 @@ export interface Snapshot {
   tracks: Track[];
   features: PointFeature[];
   tunnels: Tunnel[];
+  /** Micro element geometry: [lon, lat] vertices from origin to end. */
+  geometry: Record<string, Array<[number, number]>>;
 }
