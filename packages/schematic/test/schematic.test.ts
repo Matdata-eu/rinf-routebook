@@ -8,9 +8,12 @@ import {
   compactSwitches,
   continuousBranch,
   expandSwitches,
+  layoutMetrics,
   layoutRouteSchematic,
+  layoutRouteSchematicSolved,
   type Schematic,
   type SchematicTrack,
+  type WindowReport,
 } from "@routebook/schematic";
 
 type LngLat = [number, number];
@@ -270,5 +273,49 @@ describe("kinks on the tracks next to the route", () => {
       { from: 400, to: 600, y: 2 },
       { from: 600, to: 1000, y: 1 },
     ]);
+  });
+});
+
+describe("layoutRouteSchematicSolved: a station (railplot model, HiGHS)", () => {
+  const f = station();
+  const network = new TopoNetwork(f);
+  const switches = classifySwitches(f, { network });
+  const len = (ne: string) => f.topology.netElements.find((e) => e.id === ne)!.length;
+  const route = (forward: boolean) => {
+    const main = ["M1", "M2", "M3", "M4"];
+    const order = forward ? main : [...main].reverse();
+    return steps(...order.map((ne) => [ne, forward, len(ne)] as [string, boolean, number]));
+  };
+  const byNe = (s: Schematic) => new Map(s.tracks.map((t) => [t.ne, t]));
+
+  for (const forward of [true, false]) {
+    it(`puts the loop, the siding and the crossover on their sides without crossings (${forward ? "east" : "west"}bound)`, async () => {
+      const r = route(forward);
+      const reports: WindowReport[] = [];
+      const s = await layoutRouteSchematicSolved(r, { network, switches, tracks: f.tracks }, { onWindow: (w) => reports.push(w) });
+      expect(reports.map((w) => w.status)).toEqual(["solved"]);
+      const t = byNe(s);
+      const side = forward ? 1 : -1;
+      for (const ne of ["M1", "M2", "M3", "M4"]) expect(t.get(ne)).toMatchObject({ onRoute: true, lane: 0 });
+      for (const ne of ["L1", "L2", "L3"]) expect(t.get(ne)!.lane).toBe(side);
+      expect(t.get("SD")!.lane).toBe(2 * side);
+      // the crossover is one diagonal between the route and the loop
+      expect(t.get("XO")!.lane).toBeNull();
+      expect(Math.abs(t.get("XO")!.to.y - t.get("XO")!.from.y)).toBe(1);
+      expect(layoutMetrics(s)).toMatchObject({ crossings: 0, overlaps: 0 });
+      // the route keeps its distances (x of the route nodes); the siding still points west from its switch
+      const h = layoutRouteSchematic(r, { network, switches, tracks: f.tracks });
+      for (const ne of ["M1", "M2", "M3", "M4"]) expect([t.get(ne)!.from.x, t.get(ne)!.to.x]).toEqual([byNe(h).get(ne)!.from.x, byNe(h).get(ne)!.to.x]);
+      const sd = t.get("SD")!;
+      expect((sd.to.x - sd.from.x) * side).toBeLessThan(0);
+      // the same switches with the same sides; those on the route stay at their distance
+      expect(s.switches.map((w) => [w.node, w.deviates, w.facing, w.onRoute ? w.x : 0])).toEqual(h.switches.map((w) => [w.node, w.deviates, w.facing, w.onRoute ? w.x : 0]));
+    });
+  }
+
+  it("falls back to the heuristic layout when the solver gives no solution", async () => {
+    const r = route(true);
+    const s = await layoutRouteSchematicSolved(r, { network, switches, tracks: f.tracks }, { solver: async (ps) => ps.map(() => undefined) });
+    expect(s).toEqual(layoutRouteSchematic(r, { network, switches, tracks: f.tracks }));
   });
 });

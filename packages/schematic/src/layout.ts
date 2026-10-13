@@ -167,7 +167,7 @@ function project(rl: RouteLine, p: XY, lo: number, hi: number): Projection | und
 const sign = (v: number): 1 | -1 => (v < 0 ? -1 : 1);
 
 /** An element laid out off the route, reached from node `n` through end `a`. */
-interface Elem {
+export interface Elem {
   ne: string;
   a: EndRef;
   n: number;
@@ -185,7 +185,7 @@ interface Elem {
   diagonal: boolean;
 }
 
-interface NodeInfo {
+export interface NodeInfo {
   x: number;
   /** orientation of the node: the x direction an end leaves in is sgn × its group */
   sgn: 1 | -1;
@@ -227,11 +227,52 @@ interface Run {
  *    intervals in x: a lane is free again where the previous track on it
  *    ends, so stations far apart reuse the same lanes.
  */
-export function layoutRouteSchematic(
-  route: Route,
-  input: { network: TopoNetwork; switches: SwitchInfo[]; tracks: Track[] },
-  opts: LayoutOptions = {},
-): Schematic {
+export function layoutRouteSchematic(route: Route, input: LayoutInput, opts: LayoutOptions = {}): Schematic {
+  return layoutCore(route, input, opts).schematic;
+}
+
+export interface LayoutInput {
+  network: TopoNetwork;
+  switches: SwitchInfo[];
+  tracks: Track[];
+}
+
+/**
+ * The topology around a route that both layouts share: the nodes and
+ * elements explored from the route, the x direction each element leaves its
+ * node in, the straight pair through each node and the screen side of the
+ * ends that branch off it.
+ */
+export interface Explored {
+  route: Route;
+  net: TopoNetwork;
+  minRun: number;
+  maxLanes: number;
+  stubLength: number;
+  openLine: number;
+  ends: (n: number) => EndRef[];
+  switchAt: Map<number, SwitchInfo>;
+  describe: (ne: string) => { track?: string; kind?: Track["kind"] };
+  /** route elements on lane 0 */
+  routeTracks: SchematicTrack[];
+  routeNe: Set<string>;
+  nodes: Map<number, NodeInfo>;
+  /** nodes in the order they were reached (route nodes first) */
+  order: number[];
+  elems: Elem[];
+  /** element index by the key of either of its ends */
+  elemAt: Map<string, number>;
+  /** keys of the ends that form the straight pair through a node */
+  mainOf: (n: number) => Set<string>;
+  /** screen side (+1 = up) of an end that branches off the straight pair */
+  sigma: (n: number, r: EndRef) => 1 | -1;
+  screenOf: (n: number, sw: SwitchInfo) => { deviates: 1 | -1; facing: boolean };
+  /** number of ends of an element that branch off a straight pair (0..2) */
+  branches: (e: Elem) => number;
+}
+
+/** Explore the tracks around the route (step 1 of the layout). */
+export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptions = {}): Explored {
   const net = input.network;
   const corridor = opts.corridor ?? 600;
   const reach = opts.reach ?? 3000;
@@ -415,7 +456,21 @@ export function layoutRouteSchematic(
     if (e.m === undefined || e.conflict || branches(e) < 2) continue;
     e.diagonal = sigma(e.n, e.a) === -sigma(e.m, otherEnd(e.a));
   }
+  const routeNe = new Set(route.steps.map((s) => s.ne));
+  const elemAt = new Map<string, number>();
+  elems.forEach((e, i) => {
+    elemAt.set(endKey(e.a), i);
+    if (e.m !== undefined) elemAt.set(endKey(otherEnd(e.a)), i);
+  });
+  return {
+    route, net, minRun, maxLanes, stubLength, openLine, ends, switchAt, describe, routeTracks: tracks, routeNe, nodes, order, elems, elemAt,
+    mainOf, sigma, screenOf, branches,
+  };
+}
 
+/** Lanes of the heuristic layout (steps 2 and 3). */
+function heuristicLanes(ex: Explored): { nodeLane: (n: number) => number | undefined; elemLane: (i: number) => number | null | undefined; laid: (n: number) => boolean } {
+  const { nodes, elems, order, ends, mainOf, sigma, branches, routeNe, elemAt, minRun, maxLanes, stubLength, openLine } = ex;
   // ---- runs: elements joined by the straight pair of a node share a lane
   const ROUTE = elems.length;
   const parent = Array.from({ length: elems.length + 1 }, (_, i) => i);
@@ -423,12 +478,6 @@ export function layoutRouteSchematic(
     while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
     return i;
   };
-  const routeNe = new Set(route.steps.map((s) => s.ne));
-  const elemAt = new Map<string, number>();
-  elems.forEach((e, i) => {
-    elemAt.set(endKey(e.a), i);
-    if (e.m !== undefined) elemAt.set(endKey(otherEnd(e.a)), i);
-  });
   const indexOf = (k: string): number | undefined => (routeNe.has(parseEndKey(k).ne) ? ROUTE : elemAt.get(k));
   // a track that runs on through open line (an element of at least openLine metres) is cut there, so
   // that it can move to another lane between stations; the pieces prefer to keep each other's lane
@@ -710,19 +759,34 @@ export function layoutRouteSchematic(
     if (!steep) break;
   }
 
-  // ---- output
-  const points = new Map<number, SchematicPoint>();
-  const point = (n: number): SchematicPoint => {
-    let p = points.get(n);
-    if (!p) points.set(n, (p = { x: nodes.get(n)!.x, y: nodeLane(n) ?? 0 }));
-    return p;
-  };
-  let omitted = 0;
   const laid = (n: number) => nodes.get(n)!.onRoute || laneOfRun(mainRun(n)) !== undefined;
+  const elemLane = (i: number): number | null | undefined => {
+    const e = elems[i]!;
+    if (e.diagonal) return laid(e.n) && laid(e.m!) ? null : undefined;
+    return laneOfRun(find(i));
+  };
+  return { nodeLane, elemLane, laid };
+}
+/** How a layout places the nodes and elements explored from the route. */
+export interface Placement {
+  point: (n: number) => SchematicPoint;
+  /** lane (null = a diagonal) and kinks of a laid element; undefined = left out */
+  track: (i: number) => { lane: number | null; runs?: SchematicTrack["runs"] } | undefined;
+  /** the track straight through the node is laid out */
+  laid: (n: number) => boolean;
+}
+
+/** Turn a placement into the output: tracks, stubs for the tracks left out, switches and crossings. */
+export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: boolean } = {}): { schematic: Schematic; byElem: Map<number, SchematicTrack> } {
+  const { nodes, elems, order, ends, mainOf, sigma, screenOf, switchAt, describe, net, routeNe, route, stubLength, minRun } = ex;
+  const { point, laid } = place;
+  const tracks: SchematicTrack[] = ex.routeTracks.map((t) => ({ ...t, from: { ...t.from }, to: { ...t.to } }));
+  const byElem = new Map<number, SchematicTrack>();
+  let omitted = 0;
   elems.forEach((e, i) => {
-    const lane = e.diagonal ? null : laneOfRun(find(i));
+    const placed = place.track(i);
     const far = otherEnd(e.a);
-    if (lane === undefined || (e.diagonal && !(laid(e.n) && laid(e.m!)))) {
+    if (!placed) {
       omitted++;
       // left out: a short stub where it branches off a track that is laid out
       const at: [number, EndRef, 1 | -1] | undefined =
@@ -735,12 +799,15 @@ export function layoutRouteSchematic(
       tracks.push({ ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane: null, stub: true });
       return;
     }
+    const { lane, runs } = placed;
     const from = point(e.n);
-    const to = e.m !== undefined ? point(e.m) : { x: from.x + e.dir * Math.min(e.len, stubLength), y: lane ?? 0 };
-    tracks.push({ ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane, ...(e.stub ? { stub: true } : {}) });
+    const to = e.m !== undefined ? point(e.m) : { x: from.x + e.dir * Math.min(e.len, stubLength), y: runs?.at(-1)?.y ?? lane ?? 0 };
+    const t: SchematicTrack = { ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane, ...(e.stub ? { stub: true } : {}), ...(runs && runs.length > 1 ? { runs } : {}) };
+    byElem.set(i, t);
+    tracks.push(t);
   });
 
-  if (opts.kinks !== false) addKinks(tracks, { minRun });
+  if (opts.kinks) addKinks(tracks, { minRun });
 
   const switches: SchematicSwitch[] = [];
   const crossings: SchematicCrossing[] = [];
@@ -775,5 +842,30 @@ export function layoutRouteSchematic(
     minLane = Math.min(minLane, y);
     maxLane = Math.max(maxLane, y);
   }
-  return { length: route.length, tracks, switches, crossings, omitted, minLane, maxLane };
+  return { schematic: { length: route.length, tracks, switches, crossings, omitted, minLane, maxLane }, byElem };
+}
+
+/** The heuristic layout together with the exploration it was made from (shared with the solver layout). */
+export function layoutCore(route: Route, input: LayoutInput, opts: LayoutOptions = {}) {
+  const ex = exploreRoute(route, input, opts);
+  const h = heuristicLanes(ex);
+  const points = new Map<number, SchematicPoint>();
+  const point = (n: number): SchematicPoint => {
+    let p = points.get(n);
+    if (!p) points.set(n, (p = { x: ex.nodes.get(n)!.x, y: h.nodeLane(n) ?? 0 }));
+    return p;
+  };
+  const { schematic, byElem } = emitSchematic(
+    ex,
+    {
+      point,
+      laid: h.laid,
+      track: (i) => {
+        const lane = h.elemLane(i);
+        return lane === undefined ? undefined : { lane };
+      },
+    },
+    { kinks: opts.kinks !== false },
+  );
+  return { ex, schematic, byElem, points, laid: h.laid };
 }

@@ -16,7 +16,8 @@
     "maplibre-gl": "^5.24.0",
     "@routebook/routing": "workspace:*",
     "@routebook/routebook": "workspace:*",
-    "@routebook/schematic": "workspace:*"
+    "@routebook/schematic": "workspace:*",
+    "highs": "^1.15.3"
   },
   "devDependencies": {
     "vite": "^6.4.4"

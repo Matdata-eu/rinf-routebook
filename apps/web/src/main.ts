@@ -9,6 +9,7 @@ import { markSelected, renderRoutebook } from "./view.js";
 import { KIND_LABELS } from "./strip.js";
 import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
+import { workerSolver } from "./solver-client.js";
 
 const params = new URLSearchParams(location.search);
 const COUNTRY = (params.get("country") ?? "nor").toLowerCase();
@@ -147,6 +148,8 @@ const selection: { from?: OperationalPoint; to?: OperationalPoint } = {};
 let result: RouteResult | undefined;
 let view: "map" | "schematic" = params.get("view") === "schematic" ? "schematic" : "map";
 let schematic: { result: RouteResult; layout: Schematic } | undefined;
+/** HiGHS in a Web Worker: the schematic is drawn with the heuristic layout first, then redrawn with the solver layout. */
+const solver = workerSolver();
 let schematicZoom = 1;
 let schematicView: SchematicView | undefined;
 let selectedDistance: number | undefined;
@@ -282,7 +285,24 @@ function drawSchematic(): void {
     schematicScroll.replaceChildren(d);
     return;
   }
-  if (schematic?.result !== result) schematic = { result, layout: engine.schematic(result) };
+  if (schematic?.result !== result) {
+    const { heuristic, solved } = engine.schematics(result, solver);
+    const entry = { result, layout: heuristic };
+    schematic = entry;
+    schematicScroll.dataset.layout = "heuristic";
+    void solved.then((layout) => {
+      if (schematic !== entry) return;
+      entry.layout = layout;
+      schematicScroll.dataset.layout = "solved";
+      if (view !== "schematic" || !schematicView) return;
+      // keep the route distance at the left edge (or in the middle) of the view where it is
+      const box = schematicScroll;
+      const anchorPx = box.scrollLeft > 0 ? box.clientWidth / 2 : 0;
+      const at = schematicView.distanceAt(box.scrollLeft + anchorPx);
+      drawSchematic();
+      if (schematicView) box.scrollLeft = schematicView.pxAt(at) - anchorPx;
+    });
+  }
   const rb = result.routebook;
   const visible = rb.items.map((item, index) => ({ item, index })).filter(({ item }) => !hiddenKinds.has(item.kind));
   schematicView = renderSchematic(schematicScroll, schematic.layout, rb, {

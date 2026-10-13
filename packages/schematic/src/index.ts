@@ -21,3 +21,14 @@ export {
   type LayoutOptions,
 } from "./layout.js";
 export { addKinks, type KinkOptions } from "./kinks.js";
+export {
+  layoutRouteSchematicSolved,
+  prepareSolvedLayout,
+  type SolvedLayoutOptions,
+  type LpProblem,
+  type LpSolution,
+  type LpSolver,
+  type WindowReport,
+} from "./solver.js";
+export { loadHighs, solveWithHighs, highsSolver, type HighsLike, type HighsLoadOptions } from "./highs.js";
+export { drawnPolyline, layoutMetrics, type LayoutMetrics } from "./metrics.js";

@@ -2,7 +2,17 @@ import type { OperationalPoint, Snapshot } from "@routebook/rinf-client";
 import { expandIris, fromWebBundle, WEB_PARTS, type WebBundleMeta, type WebPart } from "@routebook/rinf-client/compact";
 import { RoutingGraph, opEndpoint, trackPreferenceCostModel, type CostModel } from "@routebook/routing";
 import { RoutebookIndex, buildRoutebook, type Routebook } from "@routebook/routebook";
-import { TopoNetwork, classifySwitches, expandSwitches, layoutRouteSchematic, type CompactSwitch, type Schematic, type SwitchInfo } from "@routebook/schematic";
+import {
+  TopoNetwork,
+  classifySwitches,
+  expandSwitches,
+  layoutRouteSchematic,
+  prepareSolvedLayout,
+  type CompactSwitch,
+  type LpSolver,
+  type Schematic,
+  type SwitchInfo,
+} from "@routebook/schematic";
 import { buildRouteGeometry, type RouteGeometry } from "./geometry.js";
 
 export interface Bundle {
@@ -67,9 +77,22 @@ export class RouteEngine {
     return this.schematicData;
   }
 
-  /** Schematic track layout around a computed route. */
+  /** Schematic track layout around a computed route (the fast heuristic layout). */
   schematic(result: RouteResult): Schematic {
     return layoutRouteSchematic(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks });
+  }
+
+  /**
+   * Both schematic layouts: the heuristic one at once, and a promise of the
+   * solver layout (its window models solved by `solver`, e.g. HiGHS in a Web
+   * Worker). The promise falls back to the heuristic layout when solving fails.
+   */
+  schematics(result: RouteResult, solver: LpSolver): { heuristic: Schematic; solved: Promise<Schematic> } {
+    const prep = prepareSolvedLayout(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks });
+    const solved = prep.problems.length
+      ? solver(prep.problems).then(prep.finish, () => prep.heuristic)
+      : Promise.resolve(prep.heuristic);
+    return { heuristic: prep.heuristic, solved };
   }
 
   route(from: OperationalPoint, to: OperationalPoint): RouteResult {

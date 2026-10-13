@@ -17,4 +17,6 @@ export default defineConfig({
   server: { port: 5173, host: "127.0.0.1" },
   preview: { port: 4173, host: "127.0.0.1" },
   build: { chunkSizeWarningLimit: 1500 },
+  // the HiGHS worker (schematic solver) is an ES module: highs.mjs loads its WebAssembly with import.meta.url
+  worker: { format: "es" },
 });

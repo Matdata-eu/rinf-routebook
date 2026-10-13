@@ -12,5 +12,5 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {"@routebook/rinf-client": "workspace:*", "@routebook/routing": "workspace:*"}
+  "dependencies": {"@routebook/rinf-client": "workspace:*", "@routebook/routing": "workspace:*", "highs": "^1.15.3"}
 }

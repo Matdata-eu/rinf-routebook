@@ -13,10 +13,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
   - Off-route tracks are placed by their distance along the track from the route, in the direction the topology gives, with at least 40 m per lane changed (`minRun`): no more near-vertical lines.
   - Kinks: tracks next to the route change lane where the topology changes, so they stay close to the route and step out only where another track appears between them (`addKinks`, `SchematicTrack.runs`, on by default, `kinks: false` turns it off). Level model after railplot (MIT).
   - Crossings and slip switches (4-end nodes) keep their straight pair through and are listed in `Schematic.crossings`.
+  - Solved layout (`layoutRouteSchematicSolved`): railplot's model (MIT) as a mixed-integer program solved by HiGHS (WebAssembly) per window of the route, with the heuristic layout as fallback; far fewer crossings and bends. `layoutMetrics` counts crossings, overlaps and bends of a drawn layout.
 - Web app: **Schematic** tab next to the map (`?view=schematic`), with compressed open line, zoom, switch tooltips and selection linked to the routebook strip.
   - Ctrl / Cmd + mouse wheel zooms at the cursor; **Fit** zooms the whole route into the view.
   - Lane changes drawn horizontal, 45° diagonal, horizontal (crossovers and kinks too); labels that would overlap are left out, OP names use up to three rows.
   - Crossings marked with an X; signals drawn on the right of the track for the direction of travel, with their names from zoom 2.
+  - The schematic is drawn with the heuristic layout first and replaced by the solved layout, computed in a Web Worker.
 - CLI: `routebook bundle` / `fetch` write `switches.json` (classified on full-resolution geometry); `pnpm bundle:nor`.
 
 ## [0.1.0] - 2026-10-13
