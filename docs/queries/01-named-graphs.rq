@@ -1,0 +1,9 @@
+# Triples per named graph (one graph per IM code; 0076 = Bane NOR)
+# Endpoint: https://graph.data.era.europa.eu/repositories/rinf-plus  (Norway / Bane NOR = graph <http://data.europa.eu/949/graph/0076>)
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY DESC(?n)

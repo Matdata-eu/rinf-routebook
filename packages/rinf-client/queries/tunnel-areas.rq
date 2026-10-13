@@ -1,0 +1,13 @@
+# Tunnel -> micro NetElements covered (NetAreaReference), offsets in metres
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?t ?ne ?startOff ?endOff WHERE { GRAPH {{graph}} {
+  ?t a era:Tunnel ; era:netReference ?area .
+  ?area a era:NetAreaReference ; era:includes ?list .
+  ?list rdf:rest*/rdf:first ?lin .
+  ?lin era:startsAt/era:hasTopoCoordinate ?sc ; era:endsAt/era:hasTopoCoordinate ?ec .
+  ?sc era:onLinearElement ?ne ; era:offsetFromOrigin ?startOff .
+  ?ec era:offsetFromOrigin ?endOff .
+} }

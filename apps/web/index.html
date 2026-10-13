@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Routebook</title>
+    <style>
+      html, body, #map { margin: 0; height: 100%; }
+      body { font-family: system-ui, sans-serif; }
+      #status { position: absolute; top: 8px; left: 8px; z-index: 1; background: #fffc; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div id="status">Loading snapshot…</div>
+    <div id="map"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

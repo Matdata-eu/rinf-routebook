@@ -1,0 +1,16 @@
+# OP -> micro NetElements via its NetAreaReference (offsets in m). Output = op_ne.csv for route_test.py
+# Endpoint: https://graph.data.era.europa.eu/repositories/rinf-plus  (Norway / Bane NOR = graph <http://data.europa.eu/949/graph/0076>)
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?op ?uopid ?name ?ne ?startOff ?endOff WHERE { GRAPH <http://data.europa.eu/949/graph/0076> {
+  ?op a era:OperationalPoint ; era:uopid ?uopid ; era:opName ?name ; era:netReference ?area .
+  ?area a era:NetAreaReference ; era:includes ?list .
+  ?list rdf:rest*/rdf:first ?lin .
+  ?lin era:startsAt/era:hasTopoCoordinate ?sc ; era:endsAt/era:hasTopoCoordinate ?ec .
+  ?sc era:onLinearElement ?ne ; era:offsetFromOrigin ?startOff .
+  ?ec era:offsetFromOrigin ?endOff .
+} }

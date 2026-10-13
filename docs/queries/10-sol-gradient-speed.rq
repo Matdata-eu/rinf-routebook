@@ -1,0 +1,14 @@
+# SoLs having at least one running track with gradient profile / max speed
+# Endpoint: https://graph.data.era.europa.eu/repositories/rinf-plus  (Norway / Bane NOR = graph <http://data.europa.eu/949/graph/0076>)
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT (COUNT(DISTINCT ?sol) AS ?sols) (COUNT(DISTINCT ?solG) AS ?withGradient) (COUNT(DISTINCT ?solV) AS ?withSpeed) WHERE {
+  GRAPH <http://data.europa.eu/949/graph/0076> {
+    ?sol a era:SectionOfLine ; era:hasPart ?t . ?t a era:RunningTrack .
+    OPTIONAL { ?t era:gradientProfile ?g BIND(?sol AS ?solG) }
+    OPTIONAL { ?t era:maximumPermittedSpeed ?v BIND(?sol AS ?solV) }
+} }

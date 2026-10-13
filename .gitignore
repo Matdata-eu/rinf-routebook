@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.vite/
+# fetched RINF snapshots (regenerate with `pnpm fetch:nor`)
+data/snapshots/
+# local scratch
+*.log
+.env
+.env.*

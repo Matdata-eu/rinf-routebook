@@ -1,0 +1,14 @@
+# OP centre point: topological coordinate + km (LRS) coordinate
+# Endpoint: https://graph.data.era.europa.eu/repositories/rinf-plus  (Norway / Bane NOR = graph <http://data.europa.eu/949/graph/0076>)
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?uopid ?name ?ne ?off ?km ?offKm WHERE { GRAPH <http://data.europa.eu/949/graph/0076> {
+  ?op a era:OperationalPoint ; era:uopid ?uopid ; era:opName ?name ; era:netReference ?p .
+  ?p a era:NetPointReference ; era:hasTopoCoordinate ?tc .
+  ?tc era:onLinearElement ?ne ; era:offsetFromOrigin ?off .
+  OPTIONAL { ?p era:hasLrsCoordinate ?lc . ?lc era:kmPost/era:kilometer ?km ; era:offsetFromKilometricPost ?offKm }
+} }

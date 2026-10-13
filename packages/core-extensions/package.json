@@ -1,0 +1,16 @@
+{
+  "name": "@routebook/core-extensions",
+  "version": "0.1.0",
+  "description": "Plugin interface for routebook item providers, map overlays and cost models",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {"@routebook/rinf-client": "workspace:*", "@routebook/routing": "workspace:*", "@routebook/routebook": "workspace:*"}
+}

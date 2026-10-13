@@ -1,0 +1,12 @@
+# WKT geometry fill per class
+# Endpoint: https://graph.data.era.europa.eu/repositories/rinf-plus  (Norway / Bane NOR = graph <http://data.europa.eu/949/graph/0076>)
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?t (COUNT(DISTINCT ?s) AS ?n) (COUNT(DISTINCT ?sw) AS ?withWkt) WHERE {
+  VALUES ?t { era:OperationalPoint era:SectionOfLine era:LinearElement era:Signal era:Switch era:KilometricPost era:Tunnel era:LevelCrossing era:PlatformEdge era:RunningTrack era:Bridge }
+  GRAPH <http://data.europa.eu/949/graph/0076> { ?s a ?t . OPTIONAL { ?s geo:hasGeometry/geo:asWKT ?w BIND(?s AS ?sw) } }
+} GROUP BY ?t

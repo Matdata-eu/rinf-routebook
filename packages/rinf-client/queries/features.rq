@@ -1,0 +1,17 @@
+# Point features with topo + LRS position and direction (docs/queries/08)
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+# Derived from docs/queries (step-1 coverage check).
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?f ?class ?label ?signalType ?ne ?off ?dir ?km ?offKm ?lrs WHERE { GRAPH {{graph}} {
+  VALUES ?class { era:Signal era:Switch era:KilometricPost era:LevelCrossing }
+  ?f a ?class ; era:netReference ?r .
+  OPTIONAL { ?f rdfs:label ?label }
+  OPTIONAL { ?f era:signalType ?signalType }
+  ?r era:hasTopoCoordinate ?tc . ?tc era:onLinearElement ?ne ; era:offsetFromOrigin ?off .
+  OPTIONAL { ?r era:appliesToDirection ?dir }
+  OPTIONAL { ?r era:hasLrsCoordinate ?lc . ?lc era:kmPost ?kp ; era:offsetFromKilometricPost ?offKm . ?kp era:kilometer ?km . OPTIONAL { ?kp era:hasLRS ?lrs } }
+} }

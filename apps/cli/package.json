@@ -1,0 +1,20 @@
+{
+  "name": "@routebook/cli",
+  "version": "0.1.0",
+  "description": "Command line: fetch a RINF snapshot and print a routebook between two operational points",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": { "routebook": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@routebook/core-extensions": "workspace:*",
+    "@routebook/rinf-client": "workspace:*",
+    "@routebook/routebook": "workspace:*",
+    "@routebook/routing": "workspace:*"
+  }
+}

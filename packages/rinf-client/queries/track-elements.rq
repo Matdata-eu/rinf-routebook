@@ -1,0 +1,12 @@
+# Track -> micro NetElements (NetLinearReference hasSequence list)
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+# Derived from docs/queries (step-1 coverage check).
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?track ?ne WHERE { GRAPH {{graph}} {
+  ?track a era:Track ; era:netReference/era:hasSequence ?seq .
+  ?seq rdf:rest*/rdf:first ?ne .
+} }

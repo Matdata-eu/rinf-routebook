@@ -1,0 +1,21 @@
+{
+  "name": "@routebook/web",
+  "version": "0.1.0",
+  "description": "Routebook web app (skeleton: MapLibre map of operational points from a RINF snapshot)",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@routebook/rinf-client": "workspace:*",
+    "maplibre-gl": "^5.24.0"
+  },
+  "devDependencies": {
+    "vite": "^6.4.4"
+  }
+}

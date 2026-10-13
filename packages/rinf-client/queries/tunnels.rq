@@ -1,0 +1,18 @@
+# Tunnels with start/end topo + LRS (docs/queries/13)
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+# Derived from docs/queries (step-1 coverage check).
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+
+SELECT ?t ?id ?label ?len ?neS ?offS ?kmS ?offKmS ?neE ?offE ?kmE ?offKmE WHERE { GRAPH {{graph}} {
+  ?t a era:Tunnel ; era:lineReferenceTunnelStart ?s ; era:lineReferenceTunnelEnd ?e .
+  OPTIONAL { ?t era:tunnelIdentification ?id }
+  OPTIONAL { ?t rdfs:label ?label }
+  OPTIONAL { ?t era:lengthOfTunnel ?len }
+  ?s era:hasTopoCoordinate ?sc . ?sc era:onLinearElement ?neS ; era:offsetFromOrigin ?offS .
+  ?e era:hasTopoCoordinate ?ec . ?ec era:onLinearElement ?neE ; era:offsetFromOrigin ?offE .
+  OPTIONAL { ?s era:hasLrsCoordinate ?ls . ?ls era:kmPost/era:kilometer ?kmS ; era:offsetFromKilometricPost ?offKmS }
+  OPTIONAL { ?e era:hasLrsCoordinate ?le . ?le era:kmPost/era:kilometer ?kmE ; era:offsetFromKilometricPost ?offKmE }
+} }
