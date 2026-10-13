@@ -8,6 +8,7 @@ import {
   continuousBranch,
   expandSwitches,
   layoutRouteSchematic,
+  type Schematic,
 } from "@routebook/schematic";
 
 type LngLat = [number, number];
@@ -116,5 +117,121 @@ describe("layoutRouteSchematic", () => {
     expect(laneOf(s, "D")).toMatchObject({ onRoute: true, lane: 0 });
     expect(laneOf(s, "K")!.lane).toBe(-1);
     expect(s.switches[0]).toMatchObject({ routeDeviates: true });
+  });
+});
+
+/**
+ * A passing loop, in metres east and north of lon 10 / lat 60. The main
+ * track 1 (M1..M4) runs east; the loop track 2 (L1..L3) leaves it to the
+ * north at switch A (x 100, facing when travelling east) and rejoins it at
+ * switch B (x 500, trailing). A crossover XO runs from switch X1 on the main
+ * track (x 250) to switch X2 on the loop (x 280), and the siding 3 (SD)
+ * leaves the loop at switch S (x 400) westwards, further north (trailing).
+ */
+function station(): Fixture {
+  const P = (mx: number, my: number): LngLat => [10 + mx / (111_320 * Math.cos((60 * Math.PI) / 180)), 60 + my / 110_574];
+  const geometry: Record<string, LngLat[]> = {
+    M1: [P(0, 0), P(100, 0)],
+    M2: [P(100, 0), P(250, 0)],
+    M3: [P(250, 0), P(500, 0)],
+    M4: [P(500, 0), P(600, 0)],
+    L1: [P(100, 0), P(130, 1.5), P(160, 4.5), P(280, 4.5)],
+    XO: [P(250, 0), P(265, 2.25), P(280, 4.5)],
+    L2: [P(280, 4.5), P(400, 4.5)],
+    L3: [P(400, 4.5), P(440, 4.5), P(470, 1.5), P(500, 0)],
+    SD: [P(400, 4.5), P(370, 7.5), P(340, 9), P(300, 9)],
+  };
+  const metres = (line: LngLat[]) => {
+    let s = 0;
+    for (let i = 1; i < line.length; i++) {
+      const [a, b] = [line[i - 1]!, line[i]!];
+      s += Math.hypot((b[0] - a[0]) * 111_320 * Math.cos((60 * Math.PI) / 180), (b[1] - a[1]) * 110_574);
+    }
+    return Math.round(s);
+  };
+  const rel = (a: string, aAtOrigin: boolean, b: string, bAtOrigin: boolean, navigable = true): NetRelation => ({ a, b, aAtOrigin, bAtOrigin, navigable });
+  // switch: common leg end, continuous branch end, deviating branch end
+  const sw = (c: [string, boolean], k: [string, boolean], d: [string, boolean]) => [rel(...c, ...k), rel(...c, ...d), rel(...k, ...d, false)];
+  return {
+    topology: {
+      netElements: Object.entries(geometry).map(([id, g]) => ({ id, length: metres(g) })),
+      netRelations: [
+        ...sw(["M1", false], ["M2", true], ["L1", true]), // A
+        ...sw(["M2", false], ["M3", true], ["XO", true]), // X1
+        ...sw(["L2", true], ["L1", false], ["XO", false]), // X2
+        ...sw(["L3", true], ["L2", false], ["SD", true]), // S
+        ...sw(["M4", true], ["M3", false], ["L3", false]), // B
+      ],
+    },
+    geometry,
+    tracks: [
+      { id: "t1", kind: "running", label: "1", elements: ["M1", "M2", "M3", "M4"], partOf: [] },
+      { id: "t2", kind: "running", label: "2", elements: ["L1", "L2", "L3"], partOf: [] },
+      { id: "t3", kind: "siding", label: "3", elements: ["SD"], partOf: [] },
+      { id: "tx", kind: "running", label: "1-2", elements: ["XO"], partOf: [] },
+    ],
+    features: [],
+  };
+}
+
+describe("layoutRouteSchematic: a station", () => {
+  const f = station();
+  const network = new TopoNetwork(f);
+  const switches = classifySwitches(f, { network });
+  const len = (ne: string) => f.topology.netElements.find((e) => e.id === ne)!.length;
+  const lay = (forward: boolean) => {
+    const main = ["M1", "M2", "M3", "M4"];
+    const order = forward ? main : [...main].reverse();
+    return layoutRouteSchematic(steps(...order.map((ne) => [ne, forward, len(ne)] as [string, boolean, number])), { network, switches, tracks: f.tracks });
+  };
+  const byNe = (s: Schematic) => new Map(s.tracks.map((t) => [t.ne, t]));
+  const overlaps = (s: Schematic) => {
+    const runs = s.tracks.filter((t) => !t.onRoute && t.lane !== null).map((t) => ({ lane: t.lane, lo: Math.min(t.from.x, t.to.x), hi: Math.max(t.from.x, t.to.x) }));
+    return runs.flatMap((a, i) => runs.slice(i + 1).filter((b) => a.lane === b.lane && a.lo < b.hi - 2 && b.lo < a.hi - 2));
+  };
+
+  it("classifies the five switches", () => {
+    expect(switches).toHaveLength(5);
+    expect(switches.map((s) => [s.common.ne, s.continuous.ne, s.deviating.ne, s.deviatingSide])).toEqual(
+      expect.arrayContaining([
+        ["M1", "M2", "L1", "left"],
+        ["M2", "M3", "XO", "left"],
+        ["L2", "L1", "XO", "left"],
+        ["L3", "L2", "SD", "right"],
+        ["M4", "M3", "L3", "right"],
+      ]),
+    );
+  });
+
+  it("puts the loop on lane 1, the siding beyond it and the crossover between adjacent lanes", () => {
+    const s = lay(true);
+    const t = byNe(s);
+    for (const ne of ["M1", "M2", "M3", "M4"]) expect(t.get(ne)).toMatchObject({ onRoute: true, lane: 0 });
+    for (const ne of ["L1", "L2", "L3"]) expect(t.get(ne)!.lane).toBe(1);
+    expect(t.get("SD")!.lane).toBe(2);
+    expect(t.get("XO")).toMatchObject({ lane: null, from: { y: 0 }, to: { y: 1 } });
+    expect(overlaps(s)).toEqual([]);
+    expect([s.minLane, s.maxLane]).toEqual([0, 2]);
+    // x follows the track: the siding leaves its switch westwards, about as long as it is
+    expect(t.get("SD")!.from.x - t.get("SD")!.to.x).toBeCloseTo(len("SD"), 0);
+    // no element changes lanes on less than its length or 40 m per lane
+    for (const e of s.tracks) {
+      const d = e.lane === null ? Math.abs(e.to.y - e.from.y) : Math.abs(e.from.y - e.lane) + Math.abs(e.to.y - e.lane);
+      expect(Math.abs(e.to.x - e.from.x)).toBeGreaterThanOrEqual(Math.min(len(e.ne), 40 * d) - 1);
+    }
+    const facing = new Map(s.switches.map((w) => [w.x, w.facing]));
+    expect([...facing.values()].filter(Boolean)).toHaveLength(2);
+  });
+
+  it("mirrors the station when travelling the other way", () => {
+    const s = lay(false);
+    const t = byNe(s);
+    for (const ne of ["L1", "L2", "L3"]) expect(t.get(ne)!.lane).toBe(-1);
+    expect(t.get("SD")!.lane).toBe(-2);
+    expect(t.get("XO")!.lane).toBeNull();
+    expect(Math.abs(t.get("XO")!.to.y - t.get("XO")!.from.y)).toBe(1);
+    expect(overlaps(s)).toEqual([]);
+    expect([s.minLane, s.maxLane]).toEqual([-2, 0]);
+    expect(t.get("SD")!.to.x - t.get("SD")!.from.x).toBeCloseTo(len("SD"), 0);
   });
 });

@@ -5,7 +5,7 @@ import { buildSearchIndex, normalizeName, searchOps } from "../src/search.js";
 import { buildRouteGeometry, pointAtDistance, sliceElement, type LngLat } from "../src/geometry.js";
 import { RouteEngine, loadBundle } from "../src/engine.js";
 import { stripRows } from "../src/strip.js";
-import { XScale, shortSwitchLabel, trackPath } from "../src/schematic.js";
+import { LabelSpace, XScale, labelRows, shortSwitchLabel, trackPath } from "../src/schematic.js";
 
 const op = (uopid: string, name: string, type = "10", ne = "", start = 0, end = 0): OperationalPoint => ({
   id: `https://data.banenor.no/data/_op_${uopid}`,
@@ -183,7 +183,24 @@ describe("schematic view helpers", () => {
   it("draws a deviating element as a diagonal into its lane", () => {
     const t = { ne: "x", onRoute: false, from: { x: 0, y: 0 }, to: { x: 100, y: 1 }, lane: 1 };
     expect(trackPath(t, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [20, -20], [100, -20]]);
-    expect(trackPath({ ...t, lane: null }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [100, -20]]);
+    expect(trackPath({ ...t, to: { x: 100, y: 0 } }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [20, -20], [80, -20], [100, -0]]);
+    expect(trackPath({ ...t, to: { x: 30, y: 0 } }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [15, -20], [15, -20], [30, -0]]);
+  });
+
+  it("draws a crossover as horizontal, 45° diagonal, horizontal", () => {
+    const t = { ne: "x", onRoute: false, from: { x: 0, y: 0 }, to: { x: 100, y: 1 }, lane: null };
+    expect(trackPath(t, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [40, -0], [60, -20], [100, -20]]);
+    expect(trackPath({ ...t, to: { x: 10, y: 1 } }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [10, -20]]);
+  });
+
+  it("leaves out labels that would overlap and puts OP names on up to three rows", () => {
+    const space = new LabelSpace();
+    expect(space.place(0, 0, 50, 10)).toBe(true);
+    expect(space.place(40, 5, 90, 15)).toBe(false);
+    expect(space.place(40, 10, 90, 20)).toBe(true);
+    expect(space.place(400, 0, 450, 10)).toBe(true);
+    const w = 40;
+    expect(labelRows([0, 10, 20, 30, 200].map((x) => ({ x, width: w })), 3)).toEqual([0, 1, 2, -1, 0]);
   });
 
   it("shortens switch names to their number", () => {

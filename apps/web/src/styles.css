@@ -86,6 +86,9 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 .sch-switch { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
 .sch-switch.route-deviates { fill: #fdebd0; }
 .sch-switch-label, .sch-track-label { font-size: 10px; fill: var(--muted); pointer-events: none; }
+.sch-signal-label { font-size: 9px; fill: #1e8449; pointer-events: none; }
+.sch-crossing path { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.sch-tools .btn:not(.icon) { min-height: 36px; padding: 0 12px; }
 .sch-op { font-size: 12px; font-weight: 600; fill: var(--ink); }
 .sch-op.kind-origin { fill: var(--from); } .sch-op.kind-destination { fill: var(--to); }
 .sch-op-line { stroke: #c9d3dc; stroke-dasharray: 2 4; }

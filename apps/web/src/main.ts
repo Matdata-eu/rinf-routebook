@@ -7,7 +7,7 @@ import { bounds, pointAtDistance, type LngLat } from "./geometry.js";
 import { buildSearchIndex, searchOps, type SearchEntry } from "./search.js";
 import { markSelected, renderRoutebook } from "./view.js";
 import { KIND_LABELS } from "./strip.js";
-import { renderSchematic } from "./schematic.js";
+import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
 
 const params = new URLSearchParams(location.search);
@@ -148,7 +148,7 @@ let result: RouteResult | undefined;
 let view: "map" | "schematic" = params.get("view") === "schematic" ? "schematic" : "map";
 let schematic: { result: RouteResult; layout: Schematic } | undefined;
 let schematicZoom = 1;
-let moveSchematicMarker: ((d: number | undefined) => void) | undefined;
+let schematicView: SchematicView | undefined;
 let selectedDistance: number | undefined;
 
 const STORAGE_KEY = "routebook.hiddenKinds";
@@ -247,7 +247,7 @@ function selectItem(index: number): void {
   if (!item || !result) return;
   markSelected(panel, index);
   selectedDistance = item.distance;
-  moveSchematicMarker?.(item.distance);
+  schematicView?.moveMarker(item.distance);
   const p = pointAtDistance(result.geometry, item.distance);
   if (!p) return;
   (map.getSource("selected") as GeoJSONSource).setData({ type: "Feature", geometry: { type: "Point", coordinates: p }, properties: {} });
@@ -273,7 +273,7 @@ function fitRoute(): void {
 const schematicScroll = $("sch-scroll");
 
 function drawSchematic(): void {
-  moveSchematicMarker = undefined;
+  schematicView = undefined;
   if (view !== "schematic") return;
   if (!engine || !result) {
     const d = document.createElement("p");
@@ -285,7 +285,7 @@ function drawSchematic(): void {
   if (schematic?.result !== result) schematic = { result, layout: engine.schematic(result) };
   const rb = result.routebook;
   const visible = rb.items.map((item, index) => ({ item, index })).filter(({ item }) => !hiddenKinds.has(item.kind));
-  moveSchematicMarker = renderSchematic(schematicScroll, schematic.layout, rb, {
+  schematicView = renderSchematic(schematicScroll, schematic.layout, rb, {
     zoom: schematicZoom,
     ...(selectedDistance !== undefined ? { selectedDistance } : {}),
     onPick: (distance) => {
@@ -313,13 +313,47 @@ function setView(next: "map" | "schematic"): void {
   syncUrl();
 }
 
-function zoomSchematic(factor: number): void {
+const MIN_ZOOM = 0.005;
+const MAX_ZOOM = 8;
+
+/** Zoom the schematic, keeping the route distance under `anchorPx` (default: the middle of the view) in place. */
+function zoomSchematic(factor: number, anchorPx = schematicScroll.clientWidth / 2): void {
   const box = schematicScroll;
-  const centre = (box.scrollLeft + box.clientWidth / 2) / (box.scrollWidth || 1);
-  schematicZoom = Math.min(8, Math.max(0.25, schematicZoom * factor));
+  const at = schematicView?.distanceAt(box.scrollLeft + anchorPx);
+  schematicZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, schematicZoom * factor));
   drawSchematic();
-  box.scrollLeft = centre * box.scrollWidth - box.clientWidth / 2;
+  if (at !== undefined && schematicView) box.scrollLeft = schematicView.pxAt(at) - anchorPx;
 }
+
+function fitSchematic(): void {
+  if (!schematic || !result) return;
+  schematicZoom = fitZoom(schematic.layout, result.routebook, schematicScroll.clientWidth, MIN_ZOOM, MAX_ZOOM);
+  drawSchematic();
+  schematicScroll.scrollLeft = 0;
+}
+
+// Ctrl / Cmd + wheel (and pinch on a touchpad) zooms at the cursor; wheel events are gathered per frame
+let wheelFactor = 1;
+let wheelAnchor = 0;
+let wheelFrame = 0;
+schematicScroll.addEventListener(
+  "wheel",
+  (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    wheelFactor *= Math.exp(-e.deltaY * unit * 0.002);
+    wheelAnchor = e.clientX - schematicScroll.getBoundingClientRect().left;
+    if (wheelFrame) return;
+    wheelFrame = requestAnimationFrame(() => {
+      wheelFrame = 0;
+      const f = wheelFactor;
+      wheelFactor = 1;
+      zoomSchematic(f, wheelAnchor);
+    });
+  },
+  { passive: false },
+);
 
 function intro(): HTMLElement {
   const d = document.createElement("div");
@@ -454,6 +488,7 @@ $("tab-map").addEventListener("click", () => setView("map"));
 $("tab-schematic").addEventListener("click", () => setView("schematic"));
 $("sch-in").addEventListener("click", () => zoomSchematic(1.5));
 $("sch-out").addEventListener("click", () => zoomSchematic(1 / 1.5));
+$("sch-fit").addEventListener("click", fitSchematic);
 attachAutocomplete(fromInput, "from");
 attachAutocomplete(toInput, "to");
 buildFilters();

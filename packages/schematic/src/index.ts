@@ -17,5 +17,6 @@ export {
   type SchematicTrack,
   type SchematicSwitch,
   type SchematicPoint,
+  type SchematicCrossing,
   type LayoutOptions,
 } from "./layout.js";
