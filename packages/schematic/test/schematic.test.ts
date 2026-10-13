@@ -3,12 +3,14 @@ import type { NetRelation, Snapshot, Track } from "@routebook/rinf-client";
 import type { Route } from "@routebook/routing";
 import {
   TopoNetwork,
+  addKinks,
   classifySwitches,
   compactSwitches,
   continuousBranch,
   expandSwitches,
   layoutRouteSchematic,
   type Schematic,
+  type SchematicTrack,
 } from "@routebook/schematic";
 
 type LngLat = [number, number];
@@ -233,5 +235,40 @@ describe("layoutRouteSchematic: a station", () => {
     expect(overlaps(s)).toEqual([]);
     expect([s.minLane, s.maxLane]).toEqual([-2, 0]);
     expect(t.get("SD")!.to.x - t.get("SD")!.from.x).toBeCloseTo(len("SD"), 0);
+  });
+});
+
+describe("kinks on the tracks next to the route", () => {
+  it("lets a track step out only where another track lies between it and the route", () => {
+    const route = { ne: "r", onRoute: true, from: { x: 0, y: 0 }, to: { x: 1000, y: 0 }, lane: 0 };
+    // a loop from the route on lane 2 over the whole station, and a siding on lane 1 in the middle of it
+    const a = { x: 0, y: 0 }, b = { x: 1000, y: 0 }, s0 = { x: 400, y: 0 }, s1 = { x: 600, y: 1 };
+    const loop = { ne: "loop", onRoute: false, from: a, to: b, lane: 2 };
+    const siding = { ne: "siding", onRoute: false, from: s0, to: s1, lane: 1 };
+    const s0r = { ne: "r2", onRoute: true, from: { x: 0, y: 0 }, to: { x: 400, y: 0 }, lane: 0 };
+    addKinks([route, s0r, loop, siding]);
+    expect(siding.lane).toBe(1);
+    expect(loop.lane).toBe(1);
+    expect((loop as { runs?: unknown }).runs).toEqual([
+      { from: 0, to: 400, y: 1 },
+      { from: 400, to: 600, y: 2 },
+      { from: 600, to: 1000, y: 1 },
+    ]);
+  });
+
+  it("keeps a dip that is too short for its diagonals on the outer lane", () => {
+    const a = { x: 0, y: 0 }, b = { x: 1000, y: 0 }, s0 = { x: 400, y: 0 }, s1 = { x: 450, y: 1 }, s2 = { x: 500, y: 0 }, s3 = { x: 600, y: 1 };
+    const loop = { ne: "loop", onRoute: false, from: a, to: b, lane: 2 } as SchematicTrack;
+    addKinks([
+      loop,
+      { ne: "s1", onRoute: false, from: s0, to: s1, lane: 1 },
+      { ne: "s2", onRoute: false, from: s2, to: s3, lane: 1 },
+    ]);
+    // between 450 and 500 there is no room to come down a lane and go up again
+    expect(loop.runs).toEqual([
+      { from: 0, to: 400, y: 1 },
+      { from: 400, to: 600, y: 2 },
+      { from: 600, to: 1000, y: 1 },
+    ]);
   });
 });

@@ -3,6 +3,7 @@ import { MinHeap, type Route } from "@routebook/routing";
 import { LocalFrame, along, cross, dot, norm, polylineLength, sub, type XY } from "./geo.js";
 import { TopoNetwork, endKey, otherEnd, parseEndKey, type EndRef } from "./network.js";
 import type { SwitchInfo } from "./switches.js";
+import { addKinks } from "./kinks.js";
 
 /**
  * Schematic coordinates: `x` is the distance along the route (metres, same
@@ -31,6 +32,13 @@ export interface SchematicTrack {
   lane: number | null;
   /** The element leaves the corridor here: only its first metres are drawn. */
   stub?: boolean;
+  /**
+   * Where the element changes lane along its length (a kink where the
+   * topology next to it changes): its horizontal pieces in order from `from`
+   * to `to`, each with the x range (route metres) and lane. `lane` is then
+   * the lane of the longest piece.
+   */
+  runs?: Array<{ from: number; to: number; y: number }>;
 }
 
 export interface SchematicSwitch {
@@ -84,6 +92,8 @@ export interface LayoutOptions {
    * more tracks than this are left out, with a short stub where they branch off.
    */
   maxLanes?: number;
+  /** Let the tracks next to the route change lane where the topology changes (default true). */
+  kinks?: boolean;
 }
 
 interface RouteLine {
@@ -729,6 +739,8 @@ export function layoutRouteSchematic(
     const to = e.m !== undefined ? point(e.m) : { x: from.x + e.dir * Math.min(e.len, stubLength), y: lane ?? 0 };
     tracks.push({ ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane, ...(e.stub ? { stub: true } : {}) });
   });
+
+  if (opts.kinks !== false) addKinks(tracks, { minRun });
 
   const switches: SchematicSwitch[] = [];
   const crossings: SchematicCrossing[] = [];

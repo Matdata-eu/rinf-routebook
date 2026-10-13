@@ -82,8 +82,10 @@ function interp(a: number[], b: number[], v: number): number {
  * Points of one element in pixels. Where an end lies on another lane than
  * the element, the element turns into its lane at 45° next to that end
  * (horizontal space = lane difference in pixels, less when the element is
- * shorter). A crossover (lane null) runs horizontally on the lane of each
- * end with a 45° diagonal between them in the middle.
+ * shorter). An element with kinks (`runs`) changes lane at 45° at each break,
+ * on the side of the break nearer the route. A crossover (lane null) runs
+ * horizontally on the lane of each end with a 45° diagonal between them in
+ * the middle.
  */
 export function trackPath(t: SchematicTrack, sx: (x: number) => number, sy: (y: number) => number): Array<[number, number]> {
   const a: [number, number] = [sx(t.from.x), sy(t.from.y)];
@@ -96,15 +98,28 @@ export function trackPath(t: SchematicTrack, sx: (x: number) => number, sy: (y: 
     const mid = (a[0] + b[0]) / 2;
     return [a, [mid - (dir * rise) / 2, a[1]], [mid + (dir * rise) / 2, b[1]], b];
   }
-  const ly = sy(t.lane);
-  const da = Math.abs(a[1] - ly), db = Math.abs(b[1] - ly);
-  // horizontal room for each diagonal: all of it when only one end changes lane, else shared by their heights
-  const room = (d: number) => (da > 0.5 && db > 0.5 ? (w * d) / (da + db) : w);
+  const runs = (t.runs ?? [{ from: t.from.x, to: t.to.x, y: t.lane }]).map((r) => ({ x0: sx(r.from), x1: sx(r.to), y: sy(r.y), lane: r.y, start: 0, end: 0 }));
+  // the diagonals each piece holds: the end diagonals, and a lane change on the side nearer the route
+  runs[0]!.start = Math.abs(a[1] - runs[0]!.y);
+  runs.at(-1)!.end += Math.abs(b[1] - runs.at(-1)!.y);
+  for (let i = 1; i < runs.length; i++) {
+    const p = runs[i - 1]!, q = runs[i]!;
+    const rise = Math.abs(q.y - p.y);
+    if (Math.abs(q.lane) < Math.abs(p.lane)) q.start += rise;
+    else p.end += rise;
+  }
   const pts: Array<[number, number]> = [a];
-  if (da > 0.5) pts.push([a[0] + dir * Math.min(da, room(da)), ly]);
-  if (db > 0.5) pts.push([b[0] - dir * Math.min(db, room(db)), ly]);
+  for (const r of runs) {
+    const room = Math.abs(r.x1 - r.x0);
+    const k = r.start + r.end > room ? room / (r.start + r.end) : 1;
+    const x0 = r.x0 + dir * r.start * k, x1 = r.x1 - dir * r.end * k;
+    if (r.start > 0.5 || pts.length === 1) pts.push([x0, r.y]);
+    else pts.push([r.x0, r.y]);
+    pts.push([x1, r.y]);
+  }
   pts.push(b);
-  return pts;
+  // drop repeated points
+  return pts.filter((p, i) => i === 0 || Math.abs(p[0] - pts[i - 1]![0]) > 0.01 || Math.abs(p[1] - pts[i - 1]![1]) > 0.01);
 }
 
 export interface SchematicViewOptions {
@@ -261,8 +276,13 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     const line = el("polyline", { points: pts.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" "), class: cls }, layer);
     title(line, `Track ${t.track ?? "?"}${t.kind ? ` (${t.kind})` : ""}${t.stub ? " · continues outside the view" : ""}\n${t.ne}`);
     if (t.lane !== null && t.track && !t.onRoute) {
-      const run = pts.filter((p) => Math.abs(p[1] - sy(t.lane!)) < 0.5);
-      if (run.length >= 2) trackLabels.push({ x0: Math.min(...run.map((p) => p[0])), x1: Math.max(...run.map((p) => p[0])), y: sy(t.lane), text: t.track });
+      // on the longest horizontal piece
+      let best: [number, number, number] | undefined;
+      for (let i = 1; i < pts.length; i++) {
+        const p = pts[i - 1]!, q = pts[i]!;
+        if (Math.abs(p[1] - q[1]) < 0.5 && (!best || Math.abs(q[0] - p[0]) > best[1] - best[0])) best = [Math.min(p[0], q[0]), Math.max(p[0], q[0]), p[1]];
+      }
+      if (best) trackLabels.push({ x0: best[0], x1: best[1], y: best[2], text: t.track });
     }
   }
 

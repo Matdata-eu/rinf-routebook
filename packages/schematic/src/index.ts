@@ -20,3 +20,4 @@ export {
   type SchematicCrossing,
   type LayoutOptions,
 } from "./layout.js";
+export { addKinks, type KinkOptions } from "./kinks.js";

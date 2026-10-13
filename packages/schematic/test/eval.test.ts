@@ -27,6 +27,7 @@ interface Quality {
   zeroLength: number;
   steep: number;
   omitted: number;
+  kinks: number;
 }
 
 describe.skipIf(!existsSync(SNAPSHOT))("schematic layout quality (Norway snapshot)", () => {
@@ -72,7 +73,9 @@ describe.skipIf(!existsSync(SNAPSHOT))("schematic layout quality (Norway snapsho
     let sideOk = 0, sideChecked = 0;
     const horiz: Array<[number, number, number, string]> = [];
     for (const t of s.tracks) {
-      if (!t.onRoute && t.lane !== null) horiz.push([t.lane, Math.min(t.from.x, t.to.x), Math.max(t.from.x, t.to.x), t.ne]);
+      if (!t.onRoute && t.lane !== null) {
+        for (const r of t.runs ?? [{ from: t.from.x, to: t.to.x, y: t.lane }]) horiz.push([r.y, Math.min(r.from, r.to), Math.max(r.from, r.to), t.ne]);
+      }
       if (t.onRoute || t.lane === null || t.lane === 0 || t.stub) continue;
       const line = (geom[t.ne] ?? []).map((p) => frame.xy(p));
       const mid = line[Math.floor(line.length / 2)];
@@ -121,11 +124,12 @@ describe.skipIf(!existsSync(SNAPSHOT))("schematic layout quality (Norway snapsho
       zeroLength: s.tracks.filter((t) => Math.abs(t.to.x - t.from.x) < 1).length,
       steep,
       omitted: s.omitted ?? 0,
+      kinks: s.tracks.reduce((n, t) => n + Math.max(0, (t.runs?.length ?? 1) - 1), 0),
     };
     console.log(
       `${a}-${b}: ${(r.length / 1000).toFixed(0)} km, ${ms.toFixed(0)} ms, ${q.tracks} tracks, ${q.switches} sw, lanes ${q.minLane}..${q.maxLane}, ` +
         `side ok ${sideOk}/${sideChecked}, crossovers ${q.crossovers} (${q.wideCrossovers} over more than one lane), stubs ${q.stubs}, ` +
-        `same-lane overlaps ${overlaps}, zero-length ${q.zeroLength}, steep ${steep}, omitted ${q.omitted}`,
+        `same-lane overlaps ${overlaps}, zero-length ${q.zeroLength}, steep ${steep}, omitted ${q.omitted}, kinks ${q.kinks}`,
     );
     return q;
   };

@@ -184,7 +184,20 @@ describe("schematic view helpers", () => {
     const t = { ne: "x", onRoute: false, from: { x: 0, y: 0 }, to: { x: 100, y: 1 }, lane: 1 };
     expect(trackPath(t, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [20, -20], [100, -20]]);
     expect(trackPath({ ...t, to: { x: 100, y: 0 } }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [20, -20], [80, -20], [100, -0]]);
-    expect(trackPath({ ...t, to: { x: 30, y: 0 } }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [15, -20], [15, -20], [30, -0]]);
+    expect(trackPath({ ...t, to: { x: 30, y: 0 } }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [15, -20], [30, -0]]);
+  });
+
+  it("draws a kink on the side of the break nearer the route", () => {
+    const t = {
+      ne: "x",
+      onRoute: false,
+      from: { x: 0, y: 3 },
+      to: { x: 300, y: 3 },
+      lane: 1,
+      runs: [{ from: 0, to: 100, y: 3 }, { from: 100, to: 200, y: 1 }, { from: 200, to: 300, y: 3 }],
+    };
+    // down at 100 (diagonal after the break), up again at 200 (diagonal before it)
+    expect(trackPath(t, (x) => x, (y) => -20 * y)).toEqual([[0, -60], [100, -60], [140, -20], [160, -20], [200, -60], [300, -60]]);
   });
 
   it("draws a crossover as horizontal, 45° diagonal, horizontal", () => {
