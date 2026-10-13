@@ -15,7 +15,8 @@
     "@routebook/rinf-client": "workspace:*",
     "maplibre-gl": "^5.24.0",
     "@routebook/routing": "workspace:*",
-    "@routebook/routebook": "workspace:*"
+    "@routebook/routebook": "workspace:*",
+    "@routebook/schematic": "workspace:*"
   },
   "devDependencies": {
     "vite": "^6.4.4"

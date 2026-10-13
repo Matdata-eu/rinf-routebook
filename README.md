@@ -4,7 +4,7 @@
 
 ![Oslo S → Drammen](docs/screenshots/oslo-drammen.png)
 
-<sub>Oslo S → Drammen: route on the map (left) and the routebook strip (right) with distance, speed band, gradient band, line km and a quality flag per item. More: [Oslo S → Bergen](docs/screenshots/oslo-bergen.png), [tablet](docs/screenshots/oslo-drammen-tablet.png), [print view](docs/screenshots/oslo-drammen-print.png).</sub>
+<sub>Oslo S → Drammen: route on the map (left) and the routebook strip (right) with distance, speed band, gradient band, line km and a quality flag per item. More: [schematic view](docs/screenshots/oslo-drammen-schematic.png), [Oslo S → Bergen](docs/screenshots/oslo-bergen.png), [tablet](docs/screenshots/oslo-drammen-tablet.png), [print view](docs/screenshots/oslo-drammen-print.png).</sub>
 
 ## Scope
 
@@ -29,6 +29,7 @@ Other commands:
 | Command | What it does |
 |---|---|
 | `pnpm demo` | Builds everything and serves the web app with the snapshot bundled, at http://127.0.0.1:4173. Routing works offline; only the map background tiles need internet. See [docs/demo.md](docs/demo.md). |
+| `pnpm bundle:nor` | Rebuilds the web bundle from the local snapshot, including the switch classification (`switches.json`) used by the schematic view |
 | `pnpm route "Oslo S" Drammen --limit 40` | Prints a routebook in the terminal (`--json`, `--kinds signal,switch`, `--area`, `--cost length`) |
 | `pnpm test` / `pnpm typecheck` | Vitest suite / TypeScript checks |
 | `pnpm screenshots` | Headless screenshots into `docs/screenshots` (uses your installed Chrome, `--channel msedge` for Edge) |
@@ -40,6 +41,8 @@ Other commands:
 3. **Endpoints:** an OP is placed on the topology through its `NetPointReference` (centre point). If it has none, the `NetAreaReference` (station area) is used.
 4. **Shortest path:** Dijkstra with a pluggable cost model. The default prefers running tracks over sidings.
 5. **Routebook:** features referenced on the traversed elements are placed by distance along the route. Signals are filtered by direction of travel. Tunnels are placed from their area coverage. Speed and gradient come from the running track. Each item is flagged as `rinf`, `derived`, `approximate` or `missing`.
+
+The **Schematic** tab shows the same route as a track diagram: the route as a straight line, the other tracks around it in lanes, with switches drawn as straight or turning branches on the correct side. RINF has no switch orientation, so this is derived from the topology and the track geometry; see [docs/architecture.md](docs/architecture.md#schematic).
 
 Routing runs in the browser in tens of milliseconds, for example 73 ms for Oslo S → Bergen (455 km, 3 800 items).
 

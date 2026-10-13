@@ -11,7 +11,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@routebook/rinf-client/compact", replacement: src("rinf-client", "compact.ts") },
-      { find: /^@routebook\/(routing|routebook)$/, replacement: fileURLToPath(new URL("../../packages/$1/src/index.ts", import.meta.url)) },
+      { find: /^@routebook\/(routing|routebook|schematic)$/, replacement: fileURLToPath(new URL("../../packages/$1/src/index.ts", import.meta.url)) },
     ],
   },
   server: { port: 5173, host: "127.0.0.1" },

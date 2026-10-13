@@ -15,6 +15,8 @@
    │                      ▼
    │           packages/routebook        RoutebookIndex + buildRoutebook → items + gaps
    │                      │
+   │           packages/schematic        switch classification + lane layout along a route
+   │                      │
    │           packages/core-extensions  PluginRegistry + extendRoutebook (plugins add items/overlays/cost models)
    │                      │
    └───────► apps/web (MapLibre)   apps/cli (fetch / route / stats)
@@ -49,6 +51,18 @@ The dependency direction is strictly downwards. `rinf-client` holds the shared s
   - `missing`: a placeholder item, e.g. a track without a speed value.
 - `gaps` lists the fields RINF can't provide (`RINF_GAPS`): speed profile, derailers, no-stop zones, switch attributes, signal id, distant signals and boards.
 - Signal direction filter: we assume `appliesToDirection` "normal" means "valid when travelling in the direction of increasing offset on the element". **This still has to be verified against Bane NOR's own data or ERA documentation.**
+
+### schematic
+
+A schematic track layout of the tracks around a route, derived from the micro topology only.
+
+- **Nodes.** `TopoNetwork` groups element ends that share NetRelations into nodes. A node with 3 ends where one end is navigable to the other two, and those two are not navigable to each other, is a switch: that end is the *common* leg, the other two are the branches. Norway has 3 447 such switches; nodes with 4 ends are crossings and slips.
+- **Continuous or deviating branch.** RINF does not say which branch of a switch is the through route, so `classifySwitches` uses Bane NOR's rule (RINF workshop slides, "schematic layouts from topology"): ① the branch whose track has the same name as the common leg's track, ② else the branch whose track has the same type (running/siding), ③ else the branch whose curvature is closest to the common leg's. For Norway, rule ① decides 88 % of the switches, ② 1 % and ③ 11 %.
+- **Left or right.** Decided spatially on a short piece of track next to the switch. The reference direction is the last 30 m of the common leg, pointing into the switch. Each branch is followed for 20 m (50 m or 100 m if the two branches are still less than 0.25° apart) and the branch with the larger counter-clockwise angle is the left one. Element geometry runs from origin to end, so the walk starts at the end that touches the switch and reverses the geometry when that is the element's end; when a branch element is shorter than the sample distance the walk continues into the next element.
+- **Precomputed.** The browser geometry is simplified to about 1 m, which changes the answer for about 5 % of the switches, so `routebook bundle` classifies on the full-resolution snapshot geometry and writes `switches.json` next to the other bundle parts. Without that file the web app classifies on the simplified geometry.
+- **Layout** (`layoutRouteSchematic`). The route is a straight line on lane 0, with x = distance along the route (the routebook scale). The tracks around it are added nearest first, up to 3 km along the track and 600 m away from the route; nodes off the route are projected onto it for their x. At a switch the continuous branch keeps the lane of the common leg and the deviating branch moves one lane to its side, mapped to the direction of travel: up is left of travel. When the route itself takes the deviating branch, the continuous branch moves to the other side. When a lane is already taken, the real lateral offset from the route decides whether the new track goes beyond the occupant or between the two; lanes are renumbered to integers per station group at the end. On Oslo S–Bergen and Trondheim–Bodø 99 % or more of the off-route tracks end up on the same side of the route as in the geometry; Oslo S–Drammen is at 95 %, with the rest in the crossovers of the busiest stations.
+
+The web app shows it under the **Schematic** tab (`?view=schematic`): open line is compressed and stations keep 0.5 px/m, with zoom buttons. Clicking in the schematic selects the nearest routebook item, and selecting a routebook item marks it in the schematic.
 
 ### core-extensions (the open-core boundary)
 

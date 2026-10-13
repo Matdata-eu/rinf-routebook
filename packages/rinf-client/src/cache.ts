@@ -24,11 +24,14 @@ export async function loadSnapshot(dir: string): Promise<Snapshot> {
   return Object.fromEntries(entries) as Record<Part, unknown> as Snapshot;
 }
 
-/** Write the compact browser bundle (see compact.ts) as one JSON file per part. */
-export async function saveWebBundle(dir: string, snapshot: Snapshot): Promise<void> {
+/**
+ * Write the compact browser bundle (see compact.ts) as one JSON file per part.
+ * `extras` are written as additional parts (`<name>.json`) with the same IRI compaction.
+ */
+export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Record<string, unknown> = {}): Promise<void> {
   await mkdir(dir, { recursive: true });
-  const parts = toWebBundle(snapshot);
-  for (const part of WEB_PARTS) {
+  const parts = toWebBundle(snapshot, { extras });
+  for (const part of [...WEB_PARTS, ...Object.keys(extras)]) {
     await writeFile(join(dir, `${part}.json`), JSON.stringify(parts[part]));
   }
 }

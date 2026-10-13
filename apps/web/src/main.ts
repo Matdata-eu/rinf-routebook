@@ -7,6 +7,8 @@ import { bounds, pointAtDistance, type LngLat } from "./geometry.js";
 import { buildSearchIndex, searchOps, type SearchEntry } from "./search.js";
 import { markSelected, renderRoutebook } from "./view.js";
 import { KIND_LABELS } from "./strip.js";
+import { renderSchematic } from "./schematic.js";
+import type { Schematic } from "@routebook/schematic";
 
 const params = new URLSearchParams(location.search);
 const COUNTRY = (params.get("country") ?? "nor").toLowerCase();
@@ -143,6 +145,11 @@ let searchIndex: SearchEntry[] = [];
 const opsById = new Map<string, OperationalPoint>();
 const selection: { from?: OperationalPoint; to?: OperationalPoint } = {};
 let result: RouteResult | undefined;
+let view: "map" | "schematic" = params.get("view") === "schematic" ? "schematic" : "map";
+let schematic: { result: RouteResult; layout: Schematic } | undefined;
+let schematicZoom = 1;
+let moveSchematicMarker: ((d: number | undefined) => void) | undefined;
+let selectedDistance: number | undefined;
 
 const STORAGE_KEY = "routebook.hiddenKinds";
 const hiddenKinds = new Set<string>(
@@ -166,14 +173,20 @@ function opLngLat(op: OperationalPoint): LngLat | undefined {
   return op.lon !== undefined && op.lat !== undefined ? [op.lon, op.lat] : undefined;
 }
 
-function update(): void {
+function syncUrl(): void {
   const url = new URL(location.href);
   for (const role of ["from", "to"] as const) {
     const op = selection[role];
     if (op) url.searchParams.set(role, op.uopid);
     else url.searchParams.delete(role);
   }
+  if (view === "schematic") url.searchParams.set("view", "schematic");
+  else url.searchParams.delete("view");
   history.replaceState(null, "", url);
+}
+
+function update(): void {
+  syncUrl();
 
   const endpoints = (["from", "to"] as const).flatMap((role) => {
     const op = selection[role];
@@ -188,6 +201,7 @@ function update(): void {
     result = undefined;
     (map.getSource("route") as GeoJSONSource | undefined)?.setData(empty);
     panel.replaceChildren(intro());
+    drawSchematic();
     setState("ready", selection.from || selection.to ? "Pick the other end of the route." : "");
     return;
   }
@@ -207,14 +221,16 @@ function compute(): void {
       geometry: { type: "LineString", coordinates: result.geometry.coordinates },
       properties: {},
     });
-    const b = bounds(result.geometry.coordinates);
-    if (b) map.fitBounds(b, { padding: 50, duration: 0, maxZoom: 13 });
+    fitRoute();
+    selectedDistance = undefined;
     drawRoutebook();
+    drawSchematic();
     setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)`);
   } catch (e) {
     result = undefined;
     (map.getSource("route") as GeoJSONSource).setData(empty);
     panel.replaceChildren(intro());
+    drawSchematic();
     setState("error", e instanceof Error ? e.message : String(e));
   }
 }
@@ -222,18 +238,87 @@ function compute(): void {
 function drawRoutebook(): void {
   if (!result) return;
   const rb = result.routebook;
-  renderRoutebook(panel, rb, {
-    hiddenKinds,
-    onSelect: (index) => {
-      const item = rb.items[index];
-      if (!item || !result) return;
-      markSelected(panel, index);
-      const p = pointAtDistance(result.geometry, item.distance);
-      if (!p) return;
-      (map.getSource("selected") as GeoJSONSource).setData({ type: "Feature", geometry: { type: "Point", coordinates: p }, properties: {} });
-      map.easeTo({ center: p, zoom: Math.max(map.getZoom(), 14), duration: 500 });
+  renderRoutebook(panel, rb, { hiddenKinds, onSelect: selectItem });
+}
+
+/** Select a routebook item: highlight the row, mark it on the map and in the schematic. */
+function selectItem(index: number): void {
+  const item = result?.routebook.items[index];
+  if (!item || !result) return;
+  markSelected(panel, index);
+  selectedDistance = item.distance;
+  moveSchematicMarker?.(item.distance);
+  const p = pointAtDistance(result.geometry, item.distance);
+  if (!p) return;
+  (map.getSource("selected") as GeoJSONSource).setData({ type: "Feature", geometry: { type: "Point", coordinates: p }, properties: {} });
+  if (view === "map") map.easeTo({ center: p, zoom: Math.max(map.getZoom(), 14), duration: 500 });
+  else map.jumpTo({ center: p, zoom: Math.max(map.getZoom(), 14) });
+}
+
+let mapNeedsFit = false;
+
+function fitRoute(): void {
+  const b = result && bounds(result.geometry.coordinates);
+  if (!b) return;
+  if (view !== "map") {
+    mapNeedsFit = true; // a hidden map has no size to fit into
+    return;
+  }
+  mapNeedsFit = false;
+  map.fitBounds(b, { padding: 50, duration: 0, maxZoom: 13 });
+}
+
+// ---------------------------------------------------------------- schematic
+
+const schematicScroll = $("sch-scroll");
+
+function drawSchematic(): void {
+  moveSchematicMarker = undefined;
+  if (view !== "schematic") return;
+  if (!engine || !result) {
+    const d = document.createElement("p");
+    d.className = "sch-empty";
+    d.textContent = "Choose a route to see its schematic track layout: the route as a straight line, with every track around it in its own lane.";
+    schematicScroll.replaceChildren(d);
+    return;
+  }
+  if (schematic?.result !== result) schematic = { result, layout: engine.schematic(result) };
+  const rb = result.routebook;
+  const visible = rb.items.map((item, index) => ({ item, index })).filter(({ item }) => !hiddenKinds.has(item.kind));
+  moveSchematicMarker = renderSchematic(schematicScroll, schematic.layout, rb, {
+    zoom: schematicZoom,
+    ...(selectedDistance !== undefined ? { selectedDistance } : {}),
+    onPick: (distance) => {
+      // nearest visible routebook item
+      let best = visible[0];
+      for (const v of visible) if (Math.abs(v.item.distance - distance) < Math.abs((best?.item.distance ?? Infinity) - distance)) best = v;
+      if (!best) return;
+      selectItem(best.index);
+      panel.querySelector(`.rb-row[data-index="${best.index}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
     },
   });
+}
+
+function setView(next: "map" | "schematic"): void {
+  view = next;
+  $("map").hidden = next !== "map";
+  $("schematic").hidden = next !== "schematic";
+  $("tab-map").setAttribute("aria-selected", String(next === "map"));
+  $("tab-schematic").setAttribute("aria-selected", String(next === "schematic"));
+  if (next === "map") {
+    map.resize();
+    if (mapNeedsFit) fitRoute();
+  }
+  drawSchematic();
+  syncUrl();
+}
+
+function zoomSchematic(factor: number): void {
+  const box = schematicScroll;
+  const centre = (box.scrollLeft + box.clientWidth / 2) / (box.scrollWidth || 1);
+  schematicZoom = Math.min(8, Math.max(0.25, schematicZoom * factor));
+  drawSchematic();
+  box.scrollLeft = centre * box.scrollWidth - box.clientWidth / 2;
 }
 
 function intro(): HTMLElement {
@@ -342,6 +427,7 @@ function buildFilters(): void {
         /* storage unavailable: keep in memory */
       }
       drawRoutebook();
+      drawSchematic();
     });
     label.append(cb, document.createTextNode(` ${KIND_LABELS[kind] ?? kind}`));
     box.append(label);
@@ -364,6 +450,10 @@ $("clear").addEventListener("click", () => {
   fromInput.value = toInput.value = "";
   update();
 });
+$("tab-map").addEventListener("click", () => setView("map"));
+$("tab-schematic").addEventListener("click", () => setView("schematic"));
+$("sch-in").addEventListener("click", () => zoomSchematic(1.5));
+$("sch-out").addEventListener("click", () => zoomSchematic(1 / 1.5));
 attachAutocomplete(fromInput, "from");
 attachAutocomplete(toInput, "to");
 buildFilters();
@@ -379,8 +469,8 @@ const stylePromise = new Promise<void>((resolve) => {
 });
 
 Promise.all([snapshotPromise, stylePromise])
-  .then(([snapshot]) => {
-    engine = new RouteEngine(snapshot);
+  .then(([{ snapshot, switches }]) => {
+    engine = new RouteEngine(snapshot, switches ? { switches } : {});
     for (const op of snapshot.ops) opsById.set(op.id, op);
     searchIndex = buildSearchIndex(snapshot.ops);
     addLayers(snapshot);
@@ -393,6 +483,7 @@ Promise.all([snapshotPromise, stylePromise])
     fromInput.value = from?.name ?? "";
     toInput.value = to?.name ?? "";
     setState("ready");
+    setView(view);
     update();
   })
   .catch((e: unknown) => setState("error", e instanceof Error ? e.message : String(e)));

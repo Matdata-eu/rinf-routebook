@@ -5,6 +5,7 @@ import { buildSearchIndex, normalizeName, searchOps } from "../src/search.js";
 import { buildRouteGeometry, pointAtDistance, sliceElement, type LngLat } from "../src/geometry.js";
 import { RouteEngine, loadBundle } from "../src/engine.js";
 import { stripRows } from "../src/strip.js";
+import { XScale, shortSwitchLabel, trackPath } from "../src/schematic.js";
 
 const op = (uopid: string, name: string, type = "10", ne = "", start = 0, end = 0): OperationalPoint => ({
   id: `https://data.banenor.no/data/_op_${uopid}`,
@@ -121,13 +122,25 @@ describe("web bundle + RouteEngine", () => {
       const part = url.split("/").pop()!.replace(".json", "");
       return new Response(JSON.stringify(parts[part]), { status: WEB_PARTS.includes(part as never) ? 200 : 404 });
     }) as unknown as typeof fetch;
-    const loaded = await loadBundle("/nor", fakeFetch);
+    const { snapshot: loaded, switches } = await loadBundle("/nor", fakeFetch);
+    expect(switches).toBeUndefined(); // no switches.json: the engine classifies in the browser
     const engine = new RouteEngine(loaded);
-    const { routebook, geometry } = engine.route(loaded.ops[0]!, loaded.ops[1]!);
+    const result = engine.route(loaded.ops[0]!, loaded.ops[1]!);
+    const { routebook, geometry } = result;
+    expect(engine.schematic(result).tracks.map((t) => [t.onRoute, t.lane])).toEqual([[true, 0], [true, 0]]);
     expect(routebook.length).toBeCloseTo(90 + 90);
     expect(routebook.items.map((i) => i.kind)).toEqual(["origin", "speed", "signal", "destination"]);
     expect(geometry.coordinates.length).toBeGreaterThanOrEqual(2);
     expect(() => engine.route(loaded.ops[0]!, loaded.ops[0]!)).toThrow(/same/);
+  });
+
+  it("loads the switch classification part with its IRIs restored", async () => {
+    const row = [`${BN}_ne_1|1`, `${BN}_ne_2|0`, `${BN}_ne_3|0`, "L", "name"];
+    const parts = toWebBundle(snapshot, { extras: { switches: [row] } }) as Record<string, unknown>;
+    expect(JSON.stringify(parts.switches)).not.toContain(BN);
+    const fakeFetch = (async (url: string) => new Response(JSON.stringify(parts[url.split("/").pop()!.replace(".json", "")]))) as unknown as typeof fetch;
+    const { switches } = await loadBundle("/nor", fakeFetch);
+    expect(switches).toEqual([row]);
   });
 
   it("reports a missing bundle clearly", async () => {
@@ -153,5 +166,27 @@ describe("stripRows", () => {
     expect(rows.map((r) => r.speedMissing)).toEqual([false, false, false, false, true, true]);
     expect(rows.map((r) => r.gradient)).toEqual([undefined, undefined, -5, -5, -5, -5]);
     expect(rows.filter((r) => r.speedChanged).map((r) => r.index)).toEqual([1, 4]);
+  });
+});
+
+describe("schematic view helpers", () => {
+  it("keeps stations at full scale and compresses open line", () => {
+    const sc = new XScale([1000, 1100, 9000], 0, 10_000, { pxPerM: 1, margin: 100, compress: 0.01, minGap: 30, maxGap: 200 });
+    // 900..1200 and 8900..9100 are busy (1 px/m); 0..900, 1200..8900 and 9100..10000 are compressed
+    expect(sc.map(1200) - sc.map(900)).toBeCloseTo(300);
+    expect(sc.map(8900) - sc.map(1200)).toBeCloseTo(77);
+    expect(sc.map(900) - sc.map(0)).toBeCloseTo(30);
+    expect(sc.invert(sc.map(1050))).toBeCloseTo(1050);
+    expect(sc.width).toBeCloseTo(30 + 300 + 77 + 200 + 30);
+  });
+
+  it("draws a deviating element as a diagonal into its lane", () => {
+    const t = { ne: "x", onRoute: false, from: { x: 0, y: 0 }, to: { x: 100, y: 1 }, lane: 1 };
+    expect(trackPath(t, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [20, -20], [100, -20]]);
+    expect(trackPath({ ...t, lane: null }, (x) => x, (y) => -20 * y)).toEqual([[0, -0], [100, -20]]);
+  });
+
+  it("shortens switch names to their number", () => {
+    expect(["Nath-Spv140B", "SPV 1", "5 Otta", "Spv615A", "W"].map(shortSwitchLabel)).toEqual(["140B", "1", "5", "615A", "W"]);
   });
 });

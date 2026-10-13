@@ -16,6 +16,7 @@ const shots = [
   { name: "oslo-drammen", query: "from=NOOSL&to=NODRM", viewport: { width: 1440, height: 900 } },
   { name: "oslo-bergen", query: "from=NOOSL&to=NOBRG", viewport: { width: 1440, height: 900 } },
   { name: "oslo-drammen-tablet", query: "from=NOOSL&to=NODRM", viewport: { width: 820, height: 1180 }, select: "Lieråstunnelen" },
+  { name: "oslo-drammen-schematic", query: "from=NOOSL&to=NODRM&view=schematic", viewport: { width: 1440, height: 900 }, scrollSchematic: 1300 },
   { name: "oslo-drammen-print", query: "from=NOOSL&to=NODRM", viewport: { width: 900, height: 1270 }, print: true },
 ];
 
@@ -38,6 +39,7 @@ try {
     if (s.select) {
       await page.locator(".rb-row.kind-tunnel", { hasText: s.select }).first().click();
     }
+    if (s.scrollSchematic) await page.evaluate((x) => (document.getElementById("sch-scroll").scrollLeft = x), s.scrollSchematic);
     await page.waitForLoadState("networkidle").catch(() => {});
     await page.waitForTimeout(2500); // let tiles and the map fade-in finish
     if (s.print) await page.emulateMedia({ media: "print" });

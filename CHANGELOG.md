@@ -4,6 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- `@routebook/schematic`:
+  - Switch classification from the micro topology: common leg, continuous and deviating branch (Bane NOR rule: same track name, then same track type, then closest curvature) and the side of the deviating branch from the geometry of the first metres of each branch.
+  - Lane layout of the tracks around a route: the route straight on lane 0, deviating branches one lane to their side, lateral offsets to resolve crowded lanes.
+- Web app: **Schematic** tab next to the map (`?view=schematic`), with compressed open line, zoom, switch tooltips and selection linked to the routebook strip.
+- CLI: `routebook bundle` / `fetch` write `switches.json` (classified on full-resolution geometry); `pnpm bundle:nor`.
+
 ## [0.1.0] - 2026-10-13
 
 First preview, Norway (Bane NOR) only.

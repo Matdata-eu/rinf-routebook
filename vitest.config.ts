@@ -11,6 +11,7 @@ export default defineConfig({
       "@routebook/routing": pkg("routing"),
       "@routebook/routebook": pkg("routebook"),
       "@routebook/core-extensions": pkg("core-extensions"),
+      "@routebook/schematic": pkg("schematic"),
     },
   },
   test: { include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts"] },

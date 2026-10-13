@@ -2,15 +2,17 @@
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { SparqlClient, countryGraph, fetchSnapshot, loadSnapshot, saveSnapshot, saveWebBundle } from "@routebook/rinf-client";
+import { SparqlClient, countryGraph, fetchSnapshot, loadSnapshot, saveSnapshot, saveWebBundle, type Snapshot } from "@routebook/rinf-client";
 import { RoutingGraph, lengthCostModel, opEndpoint, resolveOp, trackPreferenceCostModel } from "@routebook/routing";
 import { RoutebookIndex, buildRoutebook, formatRoutebook } from "@routebook/routebook";
+import { classifySwitches, compactSwitches } from "@routebook/schematic";
 
 const HELP = `routebook <command> [options]
 
 Commands:
   fetch                     Fetch a RINF snapshot from the ERA SPARQL endpoint (also writes the web bundle)
-  bundle                    Rebuild the compact web bundle (data/web/<country>) from the snapshot
+  bundle                    Rebuild the compact web bundle (data/web/<country>) from the snapshot,
+                            including the switch classification for the schematic view
   route <from> <to>         Route between two OPs (name, uopid or IRI) and print the routebook
   stats                     Topology statistics of the snapshot
 
@@ -24,6 +26,11 @@ Options:
   --cost <model>            prefer-running (default) | length
   --json                    Print JSON instead of a table (route)
 `;
+
+/** Derived bundle parts, computed on the full-resolution geometry before it is simplified. */
+function webExtras(snapshot: Snapshot): Record<string, unknown> {
+  return { switches: compactSwitches(classifySwitches(snapshot)) };
+}
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -61,7 +68,7 @@ async function main() {
       onProgress: (step, rows) => console.error(`  ${step.padEnd(16)} ${rows} rows`),
     });
     await saveSnapshot(dir, snapshot);
-    await saveWebBundle(webDir, snapshot);
+    await saveWebBundle(webDir, snapshot, webExtras(snapshot));
     console.error(`Saved to ${dir} and ${webDir} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     console.log(JSON.stringify(snapshot.meta.counts));
     return;
@@ -71,7 +78,7 @@ async function main() {
     throw new Error(`Cannot load snapshot from ${dir} (run "routebook fetch" first): ${String(e)}`);
   });
   if (cmd === "bundle") {
-    await saveWebBundle(webDir, snapshot);
+    await saveWebBundle(webDir, snapshot, webExtras(snapshot));
     console.error(`Web bundle written to ${webDir}`);
     return;
   }

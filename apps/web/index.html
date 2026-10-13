@@ -24,7 +24,27 @@
       <div id="status" class="status" role="status" aria-live="polite"></div>
     </header>
     <main class="layout">
-      <div id="map" class="map" aria-label="Map"></div>
+      <div class="stage">
+        <div class="view-tabs" role="tablist" aria-label="View">
+          <button id="tab-map" type="button" role="tab" aria-selected="true" aria-controls="map">Map</button>
+          <button id="tab-schematic" type="button" role="tab" aria-selected="false" aria-controls="schematic">Schematic</button>
+        </div>
+        <div id="map" class="map" role="tabpanel" aria-label="Map"></div>
+        <section id="schematic" class="schematic" role="tabpanel" aria-label="Schematic track layout" hidden>
+          <div class="sch-tools">
+            <button id="sch-out" type="button" class="btn icon" title="Zoom out" aria-label="Zoom out">−</button>
+            <button id="sch-in" type="button" class="btn icon" title="Zoom in" aria-label="Zoom in">+</button>
+            <span class="sch-legend">
+              <span><i class="lg lg-route"></i>route</span>
+              <span><i class="lg lg-running"></i>running track</span>
+              <span><i class="lg lg-siding"></i>siding</span>
+              <span><i class="lg lg-switch"></i>switch</span>
+              <span class="muted">Up = left of the direction of travel. Open line is compressed.</span>
+            </span>
+          </div>
+          <div id="sch-scroll" class="sch-scroll"></div>
+        </section>
+      </div>
       <aside class="panel">
         <details class="filters-box">
           <summary>Show in routebook</summary>

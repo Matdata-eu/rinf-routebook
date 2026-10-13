@@ -77,8 +77,34 @@ export function simplifyLine(coords: Array<[number, number]>, tolerance: number)
 
 const r5 = (n: number) => Math.round(n * 1e5) / 1e5;
 
-/** Snapshot -> web bundle parts (JSON-ready). */
-export function toWebBundle(snapshot: Snapshot, opts: { tolerance?: number } = {}): Record<WebPart, unknown> {
+/** Replace IRI prefixes in every string of a JSON value by their tokens. */
+export function compactIris<T>(value: T, prefixes: Record<string, string>): T {
+  const entries = Object.entries(prefixes);
+  return walk(value as unknown as Json, (s) => {
+    for (const [token, p] of entries) if (s.startsWith(p)) return token + s.slice(p.length);
+    return s;
+  }) as unknown as T;
+}
+
+/** Inverse of compactIris. */
+export function expandIris<T>(value: T, prefixes: Record<string, string>): T {
+  const tokens = Object.entries(prefixes);
+  return walk(value as unknown as Json, (s) => {
+    if (s.charCodeAt(0) !== 126 /* ~ */) return s;
+    for (const [token, p] of tokens) if (s.startsWith(token)) return p + s.slice(token.length);
+    return s;
+  }) as unknown as T;
+}
+
+/**
+ * Snapshot -> web bundle parts (JSON-ready). `extras` are additional parts
+ * (e.g. derived data such as the switch classification), compacted with the
+ * same prefixes.
+ */
+export function toWebBundle(
+  snapshot: Snapshot,
+  opts: { tolerance?: number; extras?: Record<string, unknown> } = {},
+): Record<WebPart, unknown> & Record<string, unknown> {
   const prefixList = collectPrefixes(snapshot);
   const prefixes: Record<string, string> = {};
   prefixList.forEach((p, i) => (prefixes[`~${i}/`] = p));
@@ -97,19 +123,15 @@ export function toWebBundle(snapshot: Snapshot, opts: { tolerance?: number } = {
     out[part] = walk(value as unknown as Json, compact);
   }
   out.meta = { ...(out.meta as object), prefixes } satisfies Partial<WebBundleMeta>;
-  return out;
+  const extras: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(opts.extras ?? {})) extras[name] = compactIris(value, prefixes);
+  return { ...out, ...extras };
 }
 
 /** Web bundle parts -> snapshot (IRIs restored). */
 export function fromWebBundle(parts: Record<WebPart, unknown>): Snapshot {
   const prefixes = (parts.meta as WebBundleMeta).prefixes ?? {};
-  const tokens = Object.entries(prefixes);
-  const expand = (s: string) => {
-    if (s.charCodeAt(0) !== 126 /* ~ */) return s;
-    for (const [token, p] of tokens) if (s.startsWith(token)) return p + s.slice(token.length);
-    return s;
-  };
   const out = {} as Record<WebPart, unknown>;
-  for (const part of WEB_PARTS) out[part] = part === "meta" ? parts.meta : walk(parts[part] as Json, expand);
+  for (const part of WEB_PARTS) out[part] = part === "meta" ? parts.meta : expandIris(parts[part], prefixes);
   return out as unknown as Snapshot;
 }

@@ -35,6 +35,9 @@ importers:
       '@routebook/routing':
         specifier: workspace:*
         version: link:../../packages/routing
+      '@routebook/schematic':
+        specifier: workspace:*
+        version: link:../../packages/schematic
 
   apps/web:
     dependencies:
@@ -47,6 +50,9 @@ importers:
       '@routebook/routing':
         specifier: workspace:*
         version: link:../../packages/routing
+      '@routebook/schematic':
+        specifier: workspace:*
+        version: link:../../packages/schematic
       maplibre-gl:
         specifier: ^5.24.0
         version: 5.24.0
@@ -83,6 +89,15 @@ importers:
       '@routebook/rinf-client':
         specifier: workspace:*
         version: link:../rinf-client
+
+  packages/schematic:
+    dependencies:
+      '@routebook/rinf-client':
+        specifier: workspace:*
+        version: link:../rinf-client
+      '@routebook/routing':
+        specifier: workspace:*
+        version: link:../routing
 
 packages:
 

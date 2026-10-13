@@ -15,6 +15,7 @@
     "@routebook/core-extensions": "workspace:*",
     "@routebook/rinf-client": "workspace:*",
     "@routebook/routebook": "workspace:*",
-    "@routebook/routing": "workspace:*"
+    "@routebook/routing": "workspace:*",
+    "@routebook/schematic": "workspace:*"
   }
 }
