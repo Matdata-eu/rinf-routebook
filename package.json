@@ -16,7 +16,9 @@
     "fetch:nor": "pnpm --filter @routebook/cli start fetch --country NOR",
     "route": "pnpm --filter @routebook/cli start route",
     "dev:web": "pnpm --filter @routebook/web dev",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "demo": "pnpm build && node scripts/demo.mjs",
+    "serve": "node scripts/demo.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

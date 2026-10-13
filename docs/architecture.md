@@ -65,7 +65,12 @@ A `RoutebookPlugin` can contribute:
 ## Apps
 
 - `apps/cli` provides `routebook fetch | route <from> <to> | stats`. It proves that the packages work end to end.
-- `apps/web` is a Vite + MapLibre skeleton that draws OPs and SoLs from the snapshot on an OSM raster base map. The real UI (OP picking, the routebook panel) is step 3.
+- `apps/web` is a Vite + MapLibre app written in plain TypeScript, with no UI framework:
+  - **Data:** `routebook fetch` writes a compact *web bundle* to `data/web/<country>/`, using `toWebBundle` from `@routebook/rinf-client/compact`. IRI prefixes are replaced by short tokens and element geometry is simplified to about 1 m. That gives about 12 MB raw, or about 3 MB gzipped. Vite serves the bundle from `/<country>/` and copies it into the build, so the built app routes offline.
+  - **Engine** (`engine.ts`): it loads the bundle, expands it with `fromWebBundle` and builds `RoutingGraph`, `RoutebookIndex` and the default cost model once. Each route then takes tens of milliseconds.
+  - **UI:** a search box with autocomplete (`search.ts`, diacritic-insensitive), map popups to set the origin and destination, swap and clear buttons, and the route held in the URL (`?from=NOOSL&to=NODRM`). The route line is drawn from the element geometry sliced at the step offsets (`geometry.ts`).
+  - **Routebook strip** (`strip.ts` for the pure row model, `view.ts` for the DOM): columns for distance, speed band, gradient band, line km, a symbol, the label and a quality flag. Clicking a row pans the map to that position along the route. There is a responsive tablet layout and a print stylesheet.
+- `scripts/serve.mjs` is a dependency-free static server with gzip. `scripts/demo.mjs` backs `pnpm demo`, and `scripts/screenshots.mjs` takes headless screenshots by driving the installed Chrome or Edge through `playwright-core`.
 
 ## Known limitations
 
@@ -73,3 +78,5 @@ A `RoutebookPlugin` can contribute:
 - OP areas are large. Oslo S and Lillestrøm have no centre point, so routes from or to them start at the area edge.
 - Line km values can jump inside a span (e.g. in the Oslo tunnel). Fitted km values are therefore approximate.
 - There is no validity-date filtering yet (`era:validity` is ignored).
+- Routes are the shortest along the infrastructure, with no "usual passenger route" preference and no via points yet. For example, Oslo S → Bergen goes via Gjøvikbanen and Roa–Hønefoss.
+- The base map (OSM raster tiles) and the map label fonts need internet; everything else works offline.
