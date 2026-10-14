@@ -8,16 +8,20 @@
   </head>
   <body data-state="loading">
     <header class="topbar">
-      <h1 class="brand">Routebook</h1>
+      <h1 class="brand" id="brand">Routebook</h1>
       <form class="picker" autocomplete="off" onsubmit="return false">
+        <div class="field" hidden>
+          <label for="dataset">Network</label>
+          <select id="dataset" title="RINF dataset"></select>
+        </div>
         <div class="field">
           <label for="from">From</label>
-          <input id="from" type="search" placeholder="Station or code, e.g. Oslo S" spellcheck="false" />
+          <input id="from" type="search" placeholder="Station name or code" spellcheck="false" />
         </div>
         <button id="swap" type="button" class="btn icon" title="Swap origin and destination" aria-label="Swap origin and destination">⇅</button>
         <div class="field">
           <label for="to">To</label>
-          <input id="to" type="search" placeholder="e.g. Drammen" spellcheck="false" />
+          <input id="to" type="search" placeholder="Station name or code" spellcheck="false" />
         </div>
         <button id="clear" type="button" class="btn" title="Clear route">Clear</button>
       </form>
@@ -53,7 +57,7 @@
           <div id="filters" class="filters"></div>
         </details>
         <section id="routebook" class="routebook"></section>
-        <footer class="panel-foot"><span id="meta"></span> · RINF data © European Union Agency for Railways, provided by Bane NOR · Open source (MIT)</footer>
+        <footer class="panel-foot"><span id="meta"></span> · <span id="rinf-credit">RINF data © European Union Agency for Railways</span> · <a href="https://github.com/Matdata-eu/rinf-routebook" target="_blank" rel="noopener">Routebook</a>, open source (MIT) · <a href="https://github.com/Matdata-eu/rinf-routebook/issues" target="_blank" rel="noopener">Report an issue</a><span id="privacy" hidden> · <a target="_blank" rel="noopener"></a></span></footer>
       </aside>
     </main>
     <script type="module" src="/src/main.ts"></script>

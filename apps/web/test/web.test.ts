@@ -145,7 +145,7 @@ describe("web bundle + RouteEngine", () => {
 
   it("reports a missing bundle clearly", async () => {
     const notFound = (async () => new Response("", { status: 404 })) as unknown as typeof fetch;
-    await expect(loadBundle("/xx", notFound)).rejects.toThrow(/fetch:nor/);
+    await expect(loadBundle("/xx", notFound)).rejects.toThrow(/routebook fetch/);
   });
 });
 

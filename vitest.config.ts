@@ -14,5 +14,5 @@ export default defineConfig({
       "@routebook/schematic": pkg("schematic"),
     },
   },
-  test: { include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts"] },
+  test: { include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts", "scripts/test/**/*.test.ts"] },
 });

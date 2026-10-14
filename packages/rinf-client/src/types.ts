@@ -117,8 +117,16 @@ export interface Tunnel {
 
 export interface SnapshotMeta {
   endpoint: string;
+  /** Primary named graph. */
   graph: string;
+  /** All named graphs of the dataset, when more than one. */
+  graphs?: string[];
+  /** Dataset id (historically the country code), e.g. "NOR". */
   country: string;
+  /** Display name of the dataset, e.g. "Norway". */
+  name?: string;
+  /** Infrastructure manager(s) that provide the data, for the attribution. */
+  imName?: string;
   fetchedAt: string;
   counts: Record<string, number>;
 }

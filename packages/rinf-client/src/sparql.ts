@@ -14,6 +14,11 @@ export interface SparqlClientOptions {
   endpoint?: string;
   /** Named graph IRI substituted for {{graph}} in query templates. */
   graph: string;
+  /**
+   * Several named graphs queried together (a dataset of more than one IM).
+   * {{graph}} then becomes a variable bound to each of them.
+   */
+  graphs?: string[];
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -21,19 +26,24 @@ export interface SparqlClientOptions {
 export class SparqlClient {
   readonly endpoint: string;
   readonly graph: string;
+  readonly graphs: string[];
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: SparqlClientOptions) {
     this.endpoint = opts.endpoint ?? DEFAULT_ENDPOINT;
     this.graph = opts.graph;
+    this.graphs = opts.graphs?.length ? opts.graphs : [opts.graph];
     this.timeoutMs = opts.timeoutMs ?? 300_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
   /** Substitute template parameters. */
   render(template: string): string {
-    return template.replaceAll("{{graph}}", `<${this.graph}>`);
+    if (this.graphs.length <= 1) return template.replaceAll("{{graph}}", `<${this.graphs[0] ?? this.graph}>`);
+    // an inline VALUES in front of each GRAPH block binds the graph variable to every graph of the dataset
+    const values = `VALUES ?rinfGraph { ${this.graphs.map((g) => `<${g}>`).join(" ")} } GRAPH ?rinfGraph`;
+    return template.replace(/GRAPH\s+\{\{graph\}\}/g, values).replaceAll("{{graph}}", `<${this.graphs[0]}>`);
   }
 
   async select(query: string): Promise<Row[]> {

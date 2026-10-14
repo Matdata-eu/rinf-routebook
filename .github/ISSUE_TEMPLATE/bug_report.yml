@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in Routebook doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Please check the [open issues](https://github.com/Matdata-eu/rinf-routebook/issues) first.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Route URL
+      description: The address of the app holds the dataset and the route, e.g. `?dataset=nor&from=NOOSL&to=NODRM`.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Web app
+        - Docker image / server
+        - CLI
+        - Data fetch (SPARQL)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Docker image tag, release or commit.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Server logs (`docker compose logs`), browser console errors or screenshots. Remove any API keys.

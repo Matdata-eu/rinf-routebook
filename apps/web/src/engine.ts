@@ -26,7 +26,7 @@ export async function loadBundle(baseUrl: string, fetchImpl: typeof fetch = fetc
   const parts = await Promise.all(
     WEB_PARTS.map(async (part) => {
       const res = await fetchImpl(`${baseUrl}/${part}.json`);
-      if (!res.ok) throw new Error(`Cannot load ${baseUrl}/${part}.json (${res.status}). Run "pnpm fetch:nor" first.`);
+      if (!res.ok) throw new Error(`Cannot load ${baseUrl}/${part}.json (${res.status}). No RINF data here yet: fetch it with "routebook fetch --dataset <id>" (see the README).`);
       return [part, await res.json()] as const;
     }),
   );

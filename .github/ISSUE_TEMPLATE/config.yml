@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and support
+    url: https://github.com/Matdata-eu/rinf-routebook/discussions
+    about: Ask how to deploy or use Routebook.
+  - name: Documentation
+    url: https://github.com/Matdata-eu/rinf-routebook#readme
+    about: README, deployment guide and architecture notes.

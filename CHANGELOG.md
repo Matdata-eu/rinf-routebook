@@ -6,6 +6,26 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Any RINF country or infrastructure manager, not only Norway:
+  - `routebook datasets` lists the named graphs on the endpoint with their countries.
+  - `routebook fetch --dataset <id>` takes an ISO 3166-1 alpha-3 country code (its graphs are looked up on the endpoint), an IM code such as `0076` or a graph IRI; `--graph` (repeatable), `--name` and `--im` combine graphs into one dataset. `--country` still works.
+  - Datasets of several graphs are queried together (`SparqlClientOptions.graphs`).
+  - `datasets.json` lists the fetched datasets; the web app has a **Network** picker (`?dataset=`) and opens on the whole network. The data credit names the infrastructure manager of the dataset.
+  - `ROUTEBOOK_DATA_DIR` and `ROUTEBOOK_SPARQL_ENDPOINT` for the CLI.
+- Runtime configuration (`config.json`, `ROUTEBOOK_CONFIG`, environment variables) read by the server instead of build-time variables, so one build serves any deployment: title, default dataset, extra background maps and overlays (XYZ, TMS, quadkey, WMS `{bbox-epsg-3857}`), request headers, example routes. `${NAME}` placeholders are filled from the environment.
+- Privacy statement set by the deployer (`privacy` in the configuration: a URL, a text or an HTML file served as `privacy.html`; `ROUTEBOOK_PRIVACY_URL` / `ROUTEBOOK_PRIVACY_FILE`), linked in the footer.
+- Tile proxy: layers with `"proxy": true` are fetched by the server with their keys and headers, which never reach the browser. `ESRI_API_KEY` adds Esri World Imagery this way.
+- Docker image (`ghcr.io/matdata-eu/rinf-routebook`), Docker Compose file, `.env.example` and `config.example.json`; the container fetches the datasets in `ROUTEBOOK_DATASETS` on its first start.
+- GitHub workflows: CI (build, typecheck, test) and a multi-platform Docker image published on pushes to `main` and version tags.
+- Deployment guide (`docs/deployment.md`), credits, support and security policy, issue and pull request templates.
+
+### Changed
+
+- The optional aerial background is configured at runtime (`config.json` or `ESRI_API_KEY`) instead of `VITE_*` variables in `apps/web/.env.local`.
+- The server (`scripts/serve.mjs`) also serves `config.json`, `datasets.json`, the data bundles from the data folder and `/healthz`, sends cache and security headers, and listens on `HOST` / `PORT`.
+
+### Added (schematic, drive view, background maps)
+
 - `@routebook/schematic`:
   - Switch classification from the micro topology: common leg, continuous and deviating branch (Bane NOR rule: same track name, then same track type, then closest curvature) and the side of the deviating branch from the geometry of the first metres of each branch.
   - Lane layout of the tracks around a route: the route straight on lane 0, deviating branches one lane to their side.

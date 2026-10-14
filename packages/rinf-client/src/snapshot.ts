@@ -6,6 +6,7 @@ import type {
   OperationalPoint,
   PointFeature,
   Snapshot,
+  SnapshotMeta,
   Track,
   Tunnel,
 } from "./types.js";
@@ -68,12 +69,16 @@ const FEATURE_KINDS: Record<string, FeatureKind> = {
 
 export interface FetchSnapshotOptions {
   client: SparqlClient;
+  /** Dataset id written to meta.country, e.g. "NOR". */
   country: string;
+  /** Display name and infrastructure manager for meta. */
+  name?: string;
+  imName?: string;
   onProgress?: (step: string, rows: number) => void;
 }
 
 /** Fetch everything the routebook needs for one country graph. */
-export async function fetchSnapshot({ client, country, onProgress }: FetchSnapshotOptions): Promise<Snapshot> {
+export async function fetchSnapshot({ client, country, name, imName, onProgress }: FetchSnapshotOptions): Promise<Snapshot> {
   const run = async (name: string): Promise<Row[]> => {
     const rows = await client.selectNamed(name);
     onProgress?.(name, rows.length);
@@ -96,7 +101,14 @@ export async function fetchSnapshot({ client, country, onProgress }: FetchSnapsh
     tunnelAreas: await run("tunnel-areas"),
     geometry: await run("netelement-geometry"),
   };
-  return assembleSnapshot(r, { endpoint: client.endpoint, graph: client.graph, country });
+  return assembleSnapshot(r, {
+    endpoint: client.endpoint,
+    graph: client.graphs[0] ?? client.graph,
+    ...(client.graphs.length > 1 ? { graphs: client.graphs } : {}),
+    country,
+    ...(name ? { name } : {}),
+    ...(imName ? { imName } : {}),
+  });
 }
 
 export type RawResults = Record<
@@ -108,7 +120,7 @@ export type RawResults = Record<
 /** Pure transformation of query rows into the snapshot model (deduplicates repeated labels etc.). */
 export function assembleSnapshot(
   r: RawResults,
-  meta: { endpoint: string; graph: string; country: string },
+  meta: Omit<SnapshotMeta, "fetchedAt" | "counts">,
 ): Snapshot {
   const ops = new Map<string, OperationalPoint>();
   for (const row of r.ops) {

@@ -2,6 +2,7 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
+    "allowJs": true,
     "declaration": false,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"],
@@ -11,5 +12,5 @@
       "@routebook/*": ["packages/*/src/index.ts"]
     }
   },
-  "include": ["packages/*/test/**/*.ts", "apps/*/test/**/*.ts"]
+  "include": ["packages/*/test/**/*.ts", "apps/*/test/**/*.ts", "scripts/test/**/*.ts"]
 }

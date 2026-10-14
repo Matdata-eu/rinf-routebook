@@ -1,0 +1,20 @@
+name: Feature request or data finding
+description: An idea for Routebook, or what you found about the RINF data of a country
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need, and why?
+      description: Describe the situation (who uses it, for what) more than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Ideas for a solution
+  - type: input
+    id: dataset
+    attributes:
+      label: Country or dataset
+      description: If it is about the data of one country or infrastructure manager.

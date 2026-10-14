@@ -16,7 +16,7 @@ Tips:
 
 - Use a wide window, or a tablet in portrait.
 - Use **Print / PDF** to show the paper version.
-- The URL holds the route (`?from=NOOSL&to=NODRM`), so you can bookmark the examples below.
+- The URL holds the dataset and the route (`?dataset=nor&from=NOOSL&to=NODRM`), so you can bookmark the examples below.
 
 ## 1. Oslo S → Drammen (commuter line, about 40 km)
 

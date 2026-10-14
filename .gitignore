@@ -3,11 +3,14 @@ dist/
 *.tsbuildinfo
 coverage/
 .vite/
-# fetched RINF snapshots (regenerate with `pnpm fetch:nor`)
+# fetched RINF data (regenerate with `pnpm routebook fetch --dataset <id>`)
 data/snapshots/
 data/web/
-# local scratch
-*.log
+# deployment settings: map layer keys and the like stay local (see config.example.json)
+/config.json
+/config/
 .env
 .env.*
 !.env.example
+# local scratch
+*.log

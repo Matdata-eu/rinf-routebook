@@ -11,10 +11,14 @@ import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
 import { DriveView } from "./drive-view.js";
-import { basemaps, pickBasemap, type Basemap } from "./basemaps.js";
+import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
+import { loadDatasets, pickDataset, rinfAttribution, examplesFor } from "./datasets.js";
 
 const params = new URLSearchParams(location.search);
-const COUNTRY = (params.get("country") ?? "nor").toLowerCase();
+const BASE = import.meta.env.BASE_URL;
+// runtime configuration (config.json, written by the server from its settings) and the datasets on offer
+const [CONFIG, DATASETS] = await Promise.all([loadRuntimeConfig(`${BASE}config.json`), loadDatasets(`${BASE}datasets.json`)]);
+const DATASET = pickDataset(DATASETS, params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const status = $("status");
@@ -30,21 +34,39 @@ function setState(state: "loading" | "ready" | "routing" | "routed" | "error", m
 
 // ---------------------------------------------------------------- map
 
-const BASEMAPS = basemaps(import.meta.env);
-let basemap = pickBasemap(BASEMAPS, params.get("base"));
+const BASEMAPS = basemaps(CONFIG, location.href);
+const OVERLAYS = overlays(CONFIG, location.href);
+let basemap = pickBasemap(BASEMAPS, params.get("base"), CONFIG.defaultBasemap);
+const shownOverlays = new Set(params.has("layers") ? (params.get("layers") ?? "").split(",").filter(Boolean) : OVERLAYS.filter((o) => o.visible).map((o) => o.id));
 
 const style: StyleSpecification = {
   version: 8,
   // key-free glyphs for OP labels; without network the labels are simply not drawn
-  glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-  sources: { basemap: basemap.source },
+  glyphs: CONFIG.glyphs ?? "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  sources: { basemap: basemap.source, ...Object.fromEntries(OVERLAYS.map((o) => [`overlay-${o.id}`, o.source])) },
   layers: [
     { id: "bg", type: "background", paint: { "background-color": "#eef1f4" } },
     { id: "basemap", type: "raster", source: "basemap", paint: basemap.paint },
+    ...OVERLAYS.map((o) => ({
+      id: `overlay-${o.id}`,
+      type: "raster" as const,
+      source: `overlay-${o.id}`,
+      paint: o.paint,
+      layout: { visibility: shownOverlays.has(o.id) ? ("visible" as const) : ("none" as const) },
+    })),
   ],
 };
 
-const map = new maplibregl.Map({ container: "map", style, center: [10.0, 61.5], zoom: 4.6, maxPitch: 80, attributionControl: { compact: true } });
+const transformRequest = headerTransform([...(CONFIG.basemaps ?? []), ...(CONFIG.overlays ?? [])], location.href);
+const map = new maplibregl.Map({
+  container: "map",
+  style,
+  center: [10.0, 50.0],
+  zoom: 3.5,
+  maxPitch: 80,
+  attributionControl: { compact: true },
+  ...(transformRequest ? { transformRequest } : {}),
+});
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 if (import.meta.env.DEV) Object.assign(window, { routebookMap: map });
@@ -59,7 +81,9 @@ function setBasemap(next: Basemap): void {
   if (map.getLayer("basemap")) map.removeLayer("basemap");
   if (map.getSource("basemap")) map.removeSource("basemap");
   map.addSource("basemap", next.source);
-  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: next.paint }, map.getLayer("sols") ? "sols" : undefined);
+  // under the overlays, or under the railway lines when there are none
+  const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
+  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: next.paint }, above);
   if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", next.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain);
   document.querySelectorAll<HTMLButtonElement>(".basemap-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === next.id)));
   syncUrl();
@@ -79,7 +103,27 @@ function basemapSwitch(): maplibregl.IControl {
     btn.addEventListener("click", () => setBasemap(b));
     box.append(btn);
   }
+  for (const o of OVERLAYS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "overlay";
+    btn.textContent = o.label;
+    btn.title = `Show or hide ${o.label}`;
+    btn.dataset.overlay = o.id;
+    btn.setAttribute("aria-pressed", String(shownOverlays.has(o.id)));
+    btn.addEventListener("click", () => toggleOverlay(o.id, btn));
+    box.append(btn);
+  }
   return { onAdd: () => box, onRemove: () => box.remove() };
+}
+
+function toggleOverlay(id: string, btn: HTMLButtonElement): void {
+  const on = !shownOverlays.has(id);
+  if (on) shownOverlays.add(id);
+  else shownOverlays.delete(id);
+  map.setLayoutProperty(`overlay-${id}`, "visibility", on ? "visible" : "none");
+  btn.setAttribute("aria-pressed", String(on));
+  syncUrl();
 }
 
 /** Satnav-style follow view of the route (the Drive tab). */
@@ -118,7 +162,7 @@ function addLayers(snapshot: Snapshot): void {
         properties: { id: o.id, name: o.name, uopid: o.uopid, station: o.type?.endsWith("/10") ? 1 : 0 },
       })),
   };
-  map.addSource("sols", { type: "geojson", data: sols });
+  map.addSource("sols", { type: "geojson", data: sols, attribution: rinfAttribution(snapshot.meta) });
   map.addSource("ops", { type: "geojson", data: ops });
   // lineMetrics: the Drive view colours the travelled part of the route by line-progress
   map.addSource("route", { type: "geojson", data: empty, lineMetrics: true });
@@ -240,8 +284,15 @@ function syncUrl(): void {
   if (view === "drive" && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
   else url.searchParams.delete("at");
   url.searchParams.delete("play");
-  if (basemap.id !== BASEMAPS[0]!.id) url.searchParams.set("base", basemap.id);
+  const defaultBase = pickBasemap(BASEMAPS, null, CONFIG.defaultBasemap);
+  if (basemap.id !== defaultBase.id) url.searchParams.set("base", basemap.id);
   else url.searchParams.delete("base");
+  const defaultLayers = OVERLAYS.filter((o) => o.visible).map((o) => o.id).join(",");
+  const layers = OVERLAYS.filter((o) => shownOverlays.has(o.id)).map((o) => o.id).join(",");
+  if (layers !== defaultLayers) url.searchParams.set("layers", layers);
+  else url.searchParams.delete("layers");
+  url.searchParams.delete("country");
+  if (DATASETS.length > 1 || params.has("dataset") || params.has("country")) url.searchParams.set("dataset", DATASET);
   history.replaceState(null, "", url);
 }
 
@@ -455,7 +506,22 @@ function intro(): HTMLElement {
   d.innerHTML = `<h2>Routebook</h2>
     <p>Choose an origin and a destination: type a station name above, or click an operational point on the map.</p>
     <p>The route is computed on the RINF micro topology (track level). The routebook lists what you meet along the way: lines, speed, gradient, tunnels, signals, switches and km posts.</p>
-    <p class="muted">Examples: <a href="?from=NOOSL&amp;to=NODRM">Oslo S → Drammen</a> · <a href="?from=NOOSL&amp;to=NOBRG">Oslo S → Bergen</a> · <a href="?from=NOTND&amp;to=NOBO">Trondheim S → Bodø</a></p>`;
+`;
+  const examples = examplesFor(DATASET, CONFIG.examples);
+  if (examples.length) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.append("Examples: ");
+    examples.forEach((e, i) => {
+      if (i) p.append(" · ");
+      const a = document.createElement("a");
+      const q = new URLSearchParams({ ...(DATASETS.length > 1 ? { dataset: DATASET } : {}), from: e.from, to: e.to });
+      a.href = `?${q}`;
+      a.textContent = e.label ?? `${e.from} → ${e.to}`;
+      p.append(a);
+    });
+    d.append(p);
+  }
   return d;
 }
 
@@ -591,8 +657,48 @@ panel.replaceChildren(intro());
 
 // ---------------------------------------------------------------- boot
 
+if (CONFIG.title) {
+  document.title = CONFIG.title;
+  $("brand").textContent = CONFIG.title;
+}
+if (CONFIG.privacy?.url) {
+  const box = $("privacy");
+  const link = box.querySelector("a")!;
+  link.href = CONFIG.privacy.url;
+  link.textContent = CONFIG.privacy.label || "Privacy";
+  box.hidden = false;
+}
+
+/** Dataset picker in the header, when there is more than one. */
+function buildDatasetPicker(): void {
+  const select = $<HTMLSelectElement>("dataset");
+  if (DATASETS.length < 2) return;
+  for (const d of DATASETS) {
+    const o = document.createElement("option");
+    o.value = d.id;
+    o.textContent = d.name;
+    o.selected = d.id === DATASET;
+    select.append(o);
+  }
+  select.closest<HTMLElement>(".field")!.hidden = false;
+  select.addEventListener("change", () => {
+    const url = new URL(location.href);
+    for (const k of ["from", "to", "at", "play", "country"]) url.searchParams.delete(k);
+    url.searchParams.set("dataset", select.value);
+    location.assign(url);
+  });
+}
+buildDatasetPicker();
+
+/** Show the whole network when the app opens without a route. */
+function fitNetwork(snapshot: Snapshot): void {
+  const pts = snapshot.ops.flatMap((o) => (o.lon !== undefined && o.lat !== undefined ? [[o.lon, o.lat] as LngLat] : []));
+  const b = bounds(pts);
+  if (b) map.fitBounds(b, { padding: 30, duration: 0, maxZoom: 9 });
+}
+
 setState("loading", "Loading RINF snapshot…");
-const snapshotPromise = loadBundle(`${import.meta.env.BASE_URL}${COUNTRY}`);
+const snapshotPromise = loadBundle(`${BASE}${DATASET}`);
 const stylePromise = new Promise<void>((resolve) => {
   if (map.isStyleLoaded()) resolve();
   else map.once("style.load", () => resolve());
@@ -605,7 +711,8 @@ Promise.all([snapshotPromise, stylePromise])
     searchIndex = buildSearchIndex(snapshot.ops);
     addLayers(snapshot);
     drive.setNetwork(snapshot.geometry ?? {});
-    $("meta").textContent = `RINF snapshot ${snapshot.meta.country}, fetched ${snapshot.meta.fetchedAt.slice(0, 10)}`;
+    $("meta").textContent = `RINF snapshot ${snapshot.meta.name ?? snapshot.meta.country}, fetched ${snapshot.meta.fetchedAt.slice(0, 10)}`;
+    $("rinf-credit").textContent = rinfAttribution(snapshot.meta, { html: false });
     const find = (code: string | null) => (code ? snapshot.ops.find((o) => o.uopid.toLowerCase() === code.toLowerCase()) : undefined);
     const from = find(params.get("from"));
     const to = find(params.get("to"));
@@ -614,6 +721,7 @@ Promise.all([snapshotPromise, stylePromise])
     fromInput.value = from?.name ?? "";
     toInput.value = to?.name ?? "";
     setState("ready");
+    if (!from || !to) fitNetwork(snapshot);
     setView(view);
     update();
   })

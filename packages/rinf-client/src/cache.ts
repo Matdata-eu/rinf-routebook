@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WEB_PARTS, toWebBundle } from "./compact.js";
-import type { Snapshot } from "./types.js";
+import type { Snapshot, SnapshotMeta } from "./types.js";
 
 /**
  * A snapshot is stored as one JSON file per part, so that a browser can load
@@ -34,4 +34,45 @@ export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Rec
   for (const part of [...WEB_PARTS, ...Object.keys(extras)]) {
     await writeFile(join(dir, `${part}.json`), JSON.stringify(parts[part]));
   }
+}
+
+/** One entry of datasets.json: the web bundles the app can load. */
+export interface DatasetEntry {
+  /** Folder name and `?dataset=` value, lower case. */
+  id: string;
+  name: string;
+  imName?: string;
+  fetchedAt: string;
+  ops: number;
+}
+
+export function datasetEntry(id: string, meta: SnapshotMeta): DatasetEntry {
+  return {
+    id,
+    name: meta.name ?? meta.country,
+    ...(meta.imName ? { imName: meta.imName } : {}),
+    fetchedAt: meta.fetchedAt,
+    ops: meta.counts?.ops ?? 0,
+  };
+}
+
+/**
+ * List the web bundles in `root` (one folder per dataset with a meta.json) and
+ * write them to `root/datasets.json`, which the web app reads to offer a dataset picker.
+ */
+export async function writeDatasetIndex(root: string): Promise<DatasetEntry[]> {
+  const entries: DatasetEntry[] = [];
+  for (const d of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!d.isDirectory()) continue;
+    try {
+      const meta = JSON.parse(await readFile(join(root, d.name, "meta.json"), "utf8")) as SnapshotMeta;
+      entries.push(datasetEntry(d.name, meta));
+    } catch {
+      /* not a bundle */
+    }
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "datasets.json"), JSON.stringify(entries, null, 2));
+  return entries;
 }

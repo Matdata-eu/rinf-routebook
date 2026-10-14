@@ -5,8 +5,8 @@
 ```
               ERA knowledge graph (SPARQL, public)
                           │
-              packages/rinf-client  ── queries/*.rq ({{graph}} = country graph)
-                          │  fetchSnapshot → data/snapshots/<country>/*.json
+              packages/rinf-client  ── queries/*.rq ({{graph}} = the dataset's named graph(s))
+                          │  fetchSnapshot → data/snapshots/<dataset>/*.json
                           ▼
    ┌──────────── Snapshot (ops, lines, sols, topology, tracks, features, tunnels)
    │                      │
@@ -86,19 +86,19 @@ A `RoutebookPlugin` can contribute:
 
 ## Apps
 
-- `apps/cli` provides `routebook fetch | route <from> <to> | stats`. It proves that the packages work end to end.
+- `apps/cli` provides `routebook datasets | fetch | bundle | index | route <from> <to> | stats`. It proves that the packages work end to end.
 - `apps/web` is a Vite + MapLibre app written in plain TypeScript, with no UI framework:
-  - **Data:** `routebook fetch` writes a compact *web bundle* to `data/web/<country>/`, using `toWebBundle` from `@routebook/rinf-client/compact`. IRI prefixes are replaced by short tokens and element geometry is simplified to about 1 m. That gives about 12 MB raw, or about 3 MB gzipped. Vite serves the bundle from `/<country>/` and copies it into the build, so the built app routes offline.
+  - **Data:** `routebook fetch` writes a compact *web bundle* to `data/web/<dataset>/` (and lists it in `data/web/datasets.json`), using `toWebBundle` from `@routebook/rinf-client/compact`. IRI prefixes are replaced by short tokens and element geometry is simplified to about 1 m. That gives about 12 MB raw, or about 3 MB gzipped. The server (and Vite in development) serves the bundle from `/<dataset>/`; `pnpm build` also copies `data/web` into the build, so the built app routes offline.
   - **Engine** (`engine.ts`): it loads the bundle, expands it with `fromWebBundle` and builds `RoutingGraph`, `RoutebookIndex` and the default cost model once. Each route then takes tens of milliseconds.
   - **UI:** a search box with autocomplete (`search.ts`, diacritic-insensitive), map popups to set the origin and destination, swap and clear buttons, and the route held in the URL (`?from=NOOSL&to=NODRM`). The route line is drawn from the element geometry sliced at the step offsets (`geometry.ts`).
   - **Routebook strip** (`strip.ts` for the pure row model, `view.ts` for the DOM): columns for distance, speed band, gradient band, line km, a symbol, the label and a quality flag. Clicking a row pans the map to that position along the route. There is a responsive tablet layout and a print stylesheet.
-- `scripts/serve.mjs` is a dependency-free static server with gzip. `scripts/demo.mjs` backs `pnpm demo`, and `scripts/screenshots.mjs` takes headless screenshots by driving the installed Chrome or Edge through `playwright-core`.
+- `scripts/serve.mjs` is the dependency-free server used in Docker and by `pnpm demo`: static files with gzip, the data bundles from `ROUTEBOOK_DATA_DIR`, `datasets.json`, the runtime configuration (`config.json`, built by `scripts/runtime-config.mjs`) and the tile proxy for layers with keys. See [deployment.md](deployment.md). `scripts/demo.mjs` backs `pnpm demo`, and `scripts/screenshots.mjs` takes headless screenshots by driving the installed Chrome or Edge through `playwright-core`.
 
 ## Known limitations
 
-- Only Norway has been checked.
+- Only Norway has been checked in detail. Other countries can be fetched, but their micro topology may be incomplete.
 - OP areas are large. Oslo S and Lillestrøm have no centre point, so routes from or to them start at the area edge.
 - Line km values can jump inside a span (e.g. in the Oslo tunnel). Fitted km values are therefore approximate.
 - There is no validity-date filtering yet (`era:validity` is ignored).
 - Routes are the shortest along the infrastructure, with no "usual passenger route" preference and no via points yet. For example, Oslo S → Bergen goes via Gjøvikbanen and Roa–Hønefoss.
-- The background maps (OSM raster tiles, Sentinel-2 cloudless, optional aerial imagery, see `apps/web/src/basemaps.ts`) and the map label fonts need internet; everything else works offline.
+- The background maps (OSM raster tiles, Sentinel-2 cloudless, configured layers, see `apps/web/src/basemaps.ts`) and the map label fonts need internet; everything else works offline.

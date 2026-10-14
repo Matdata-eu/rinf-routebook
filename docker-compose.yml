@@ -1,0 +1,24 @@
+# Routebook with Docker Compose:
+#   cp .env.example .env               # optional: datasets, keys
+#   cp config.example.json config/config.json   # optional: your own map layers
+#   docker compose up -d               # http://localhost:8080
+# The first start fetches the RINF data (ROUTEBOOK_DATASETS) into the routebook-data volume.
+services:
+  routebook:
+    image: ghcr.io/matdata-eu/rinf-routebook:${ROUTEBOOK_VERSION:-latest}
+    build: .
+    ports:
+      - "${ROUTEBOOK_PORT:-8080}:8080"
+    environment:
+      ROUTEBOOK_DATASETS: ${ROUTEBOOK_DATASETS:-NOR}
+    # every variable in .env reaches the container, so config/config.json can use ${MY_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - routebook-data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+
+volumes:
+  routebook-data:

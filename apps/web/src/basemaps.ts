@@ -1,13 +1,14 @@
-import type { RasterLayerSpecification, RasterSourceSpecification } from "maplibre-gl";
+import type { RasterLayerSpecification, RasterSourceSpecification, RequestParameters } from "maplibre-gl";
 
 /**
- * Background maps the user can switch between.
+ * Background maps and overlays.
  *
  * The code is MIT, but every tile service has its own terms, so the app only
- * ships services that need no key and allow commercial use. Higher resolution
- * imagery (Esri World Imagery, Norge i bilder, a company WMTS, ...) is opt-in:
- * whoever deploys the app sets it up with their own key in an env file, see
- * apps/web/.env.example. Keys end up in the browser, so use referrer-restricted keys.
+ * ships services that need no key and allow commercial use. Everything else
+ * (Esri World Imagery, a national orthophoto service, a company WMS/WMTS, ...)
+ * is added by whoever deploys the app, in the runtime configuration
+ * (config.json, see docs/deployment.md). With `proxy: true` the server
+ * fetches the tiles and adds the key, so it never reaches the browser.
  */
 export interface Basemap {
   id: string;
@@ -18,16 +19,52 @@ export interface Basemap {
   aerial: boolean;
 }
 
-export interface BasemapEnv {
-  VITE_ESRI_API_KEY?: string;
-  VITE_AERIAL_TILES?: string;
-  VITE_AERIAL_LABEL?: string;
-  VITE_AERIAL_ATTRIBUTION?: string;
-  VITE_AERIAL_MAXZOOM?: string;
-  VITE_AERIAL_TILESIZE?: string;
+/** One raster layer in config.json (`basemaps` or `overlays`). */
+export interface LayerConfig {
+  id: string;
+  label?: string;
+  /**
+   * Tile URL templates: {z}/{x}/{y}, {quadkey} or {bbox-epsg-3857} (WMS GetMap).
+   * Relative URLs (e.g. the server's proxy, `tiles/<id>/{z}/{x}/{y}`) resolve against the app.
+   */
+  tiles: string[];
+  tileSize?: number;
+  minzoom?: number;
+  maxzoom?: number;
+  scheme?: "xyz" | "tms";
+  /** [west, south, east, north] in degrees: no requests outside it. */
+  bounds?: [number, number, number, number];
+  attribution?: string;
+  /** Imagery (dark, busy): the railway lines are drawn light on it. Default true for basemaps. */
+  imagery?: boolean;
+  opacity?: number;
+  /** Extra MapLibre raster paint properties. */
+  paint?: RasterLayerSpecification["paint"];
+  /** Headers the browser sends with each tile request (visible to users: prefer `proxy`). */
+  headers?: Record<string, string>;
+  /** Overlays only: shown when the app opens. */
+  visible?: boolean;
 }
 
-const RINF = "RINF © ERA, data: Bane NOR";
+/** The runtime configuration (config.json), all optional. See docs/deployment.md. */
+export interface RuntimeConfig {
+  /** App title in the header and the browser tab. */
+  title?: string;
+  /** Dataset opened when the URL has none, e.g. "nor". */
+  defaultDataset?: string;
+  /** Built-in backgrounds to offer: true (default) for all, false for none, or a list of ids ("map", "satellite"). */
+  builtinBasemaps?: boolean | string[];
+  /** Background opened when the URL has none. */
+  defaultBasemap?: string;
+  basemaps?: LayerConfig[];
+  overlays?: LayerConfig[];
+  /** Glyph URL template for map labels (MapLibre `glyphs`). */
+  glyphs?: string;
+  /** Privacy statement, linked in the footer: the server turns a text or file into `privacy.html`. */
+  privacy?: { label?: string; url: string };
+  /** Example routes on the start panel, per dataset id: [{ from: uopid, to: uopid, label? }]. */
+  examples?: Record<string, Array<{ from: string; to: string; label?: string }>>;
+}
 
 /** Plain map: OSM, greyed out so the railway overlay stands out. Fine for a demo, not for heavy production use. */
 const osm: Basemap = {
@@ -38,7 +75,7 @@ const osm: Basemap = {
     tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
     tileSize: 256,
     maxzoom: 19,
-    attribution: `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · ${RINF}`,
+    attribution: `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`,
   },
   paint: { "raster-saturation": -0.85, "raster-opacity": 0.75 },
   aerial: false,
@@ -56,59 +93,93 @@ const s2cloudless: Basemap = {
     tiles: ["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg"],
     tileSize: 256,
     maxzoom: 15,
-    attribution: `<a href="https://cloudless.eox.at">EOxCloudless</a> by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 &amp; 2017) · ${RINF}`,
+    attribution: `<a href="https://cloudless.eox.at">EOxCloudless</a> by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 &amp; 2017)`,
   },
   paint: { "raster-saturation": -0.2, "raster-brightness-max": 0.9 },
   aerial: true,
 };
 
+export const BUILTIN_BASEMAPS: readonly Basemap[] = [osm, s2cloudless];
+
 const aerialPaint: RasterLayerSpecification["paint"] = { "raster-saturation": -0.25, "raster-brightness-max": 0.85 };
 
-/** Esri World Imagery through ArcGIS Location Platform; needs the deployer's own API key. */
-function esri(key: string): Basemap {
-  return {
-    id: "aerial",
-    label: "Aerial",
-    source: {
-      type: "raster",
-      tiles: [`https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=${encodeURIComponent(key)}`],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: `Powered by <a href="https://www.esri.com">Esri</a> · Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community · ${RINF}`,
-    },
-    paint: aerialPaint,
-    aerial: true,
+/** Resolve a tile template against the page URL, keeping {placeholders} as they are (URL() would encode the braces). */
+export function absoluteTemplate(template: string, base: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(template)) return template;
+  const origin = new URL(base).origin;
+  if (template.startsWith("//")) return new URL(base).protocol + template;
+  if (template.startsWith("/")) return origin + template;
+  const dir = base.split(/[?#]/)[0]!.replace(/[^/]*$/, "");
+  return dir + template.replace(/^\.\//, "");
+}
+
+/** A config layer as a MapLibre raster source + paint. */
+export function layerFromConfig(c: LayerConfig, opts: { base: string; overlay?: boolean }): Basemap {
+  const imagery = c.imagery ?? !opts.overlay;
+  const paint: RasterLayerSpecification["paint"] = {
+    ...(opts.overlay ? {} : imagery ? aerialPaint : {}),
+    ...(c.opacity !== undefined ? { "raster-opacity": c.opacity } : {}),
+    ...c.paint,
+  };
+  const source: RasterSourceSpecification = {
+    type: "raster",
+    tiles: c.tiles.map((t) => absoluteTemplate(t, opts.base)),
+    tileSize: c.tileSize === 512 ? 512 : 256,
+    maxzoom: Number.isFinite(c.maxzoom) && c.maxzoom! > 0 ? c.maxzoom! : 19,
+    ...(Number.isFinite(c.minzoom) ? { minzoom: c.minzoom! } : {}),
+    ...(c.scheme === "tms" ? { scheme: "tms" as const } : {}),
+    ...(c.bounds?.length === 4 ? { bounds: c.bounds } : {}),
+    ...(c.attribution ? { attribution: c.attribution } : {}),
+  };
+  return { id: c.id, label: c.label?.trim() || c.id, source, paint, aerial: imagery };
+}
+
+const valid = (c: LayerConfig | undefined): c is LayerConfig =>
+  !!c && typeof c.id === "string" && c.id.trim() !== "" && Array.isArray(c.tiles) && c.tiles.some((t) => typeof t === "string" && t.trim() !== "");
+
+/** The backgrounds on offer: the built-ins that are switched on, then the configured ones (a configured id replaces a built-in). */
+export function basemaps(config: RuntimeConfig, base = "http://localhost/"): Basemap[] {
+  const own = (config.basemaps ?? []).filter(valid).map((c) => layerFromConfig(c, { base }));
+  const keep = config.builtinBasemaps ?? true;
+  const builtins = BUILTIN_BASEMAPS.filter((b) => (keep === true || (Array.isArray(keep) && keep.includes(b.id))) && !own.some((o) => o.id === b.id));
+  const list = [...builtins, ...own];
+  return list.length ? list : [osm];
+}
+
+/** Configured overlays, drawn between the background and the railway lines. */
+export function overlays(config: RuntimeConfig, base = "http://localhost/"): Array<Basemap & { visible: boolean }> {
+  return (config.overlays ?? []).filter(valid).map((c) => ({ ...layerFromConfig(c, { base, overlay: true }), visible: c.visible === true }));
+}
+
+/** Pick by id (the `base` URL parameter, then the configured default); "aerial" falls back to the first imagery. */
+export function pickBasemap(list: Basemap[], id: string | null | undefined, fallback?: string): Basemap {
+  const find = (x: string | null | undefined) => (x ? list.find((b) => b.id === x) : undefined);
+  return find(id) ?? (id === "aerial" ? list.find((b) => b.aerial && b.id !== "satellite") ?? list.find((b) => b.aerial) : undefined) ?? find(fallback) ?? list[0]!;
+}
+
+/**
+ * MapLibre transformRequest that adds the configured headers to tile requests
+ * of the layers that have them (matched on the template up to its first placeholder).
+ */
+export function headerTransform(layers: LayerConfig[], base = "http://localhost/"): ((url: string) => RequestParameters | undefined) | undefined {
+  const rules = layers
+    .filter((l) => valid(l) && l.headers && Object.keys(l.headers).length)
+    .flatMap((l) => l.tiles.map((t) => ({ prefix: absoluteTemplate(t, base).split("{")[0]!, headers: l.headers! })));
+  if (!rules.length) return undefined;
+  return (url) => {
+    const rule = rules.find((r) => url.startsWith(r.prefix));
+    return rule ? { url, headers: rule.headers } : undefined;
   };
 }
 
-/** Any XYZ raster template ({z}/{x}/{y}, or {quadkey}/{bbox-epsg-3857}), e.g. a Norge i bilder cache for Norge digitalt parties. */
-function custom(env: BasemapEnv): Basemap {
-  const maxzoom = Number(env.VITE_AERIAL_MAXZOOM);
-  const tileSize = Number(env.VITE_AERIAL_TILESIZE);
-  return {
-    id: "aerial",
-    label: env.VITE_AERIAL_LABEL?.trim() || "Aerial",
-    source: {
-      type: "raster",
-      tiles: [env.VITE_AERIAL_TILES!.trim()],
-      tileSize: tileSize === 512 ? 512 : 256,
-      maxzoom: Number.isFinite(maxzoom) && maxzoom > 0 ? maxzoom : 19,
-      attribution: [env.VITE_AERIAL_ATTRIBUTION?.trim(), RINF].filter(Boolean).join(" · "),
-    },
-    paint: aerialPaint,
-    aerial: true,
-  };
-}
-
-/** The basemaps on offer: always the plain map and Sentinel-2, plus a configured high-resolution aerial if any. */
-export function basemaps(env: BasemapEnv): Basemap[] {
-  const list = [osm, s2cloudless];
-  if (env.VITE_AERIAL_TILES?.trim()) list.push(custom(env));
-  else if (env.VITE_ESRI_API_KEY?.trim()) list.push(esri(env.VITE_ESRI_API_KEY.trim()));
-  return list;
-}
-
-/** Pick by id (the `base` URL parameter); "aerial" falls back to Sentinel-2 when no high-resolution source is set up. */
-export function pickBasemap(list: Basemap[], id: string | null | undefined): Basemap {
-  return list.find((b) => b.id === id) ?? (id === "aerial" ? list.find((b) => b.aerial) : undefined) ?? list[0]!;
+/** Load config.json next to the app; a missing or broken file gives the defaults. */
+export async function loadRuntimeConfig(url: string, fetchImpl: typeof fetch = fetch): Promise<RuntimeConfig> {
+  try {
+    const res = await fetchImpl(url, { cache: "no-cache" });
+    if (!res.ok) return {};
+    const json = (await res.json()) as unknown;
+    return json && typeof json === "object" && !Array.isArray(json) ? (json as RuntimeConfig) : {};
+  } catch {
+    return {};
+  }
 }
