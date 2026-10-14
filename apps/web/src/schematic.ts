@@ -139,7 +139,10 @@ export interface SchematicView {
 const SVG = "http://www.w3.org/2000/svg";
 const LANE = 26;
 const TOP = 76;
-const BOTTOM = 40;
+/** Bottom band: rows for the line, speed and gradient, then the km ruler. */
+const ROW = 16;
+const BAND_ROWS = ["line", "speed", "gradient"] as const;
+const BOTTOM = BAND_ROWS.length * ROW + 40;
 const PAD = 40;
 const OP_ROWS = 3;
 /** Zoom from which signal names are shown. */
@@ -237,17 +240,9 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
 
   const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, class: "sch-svg", role: "img", "aria-label": `Schematic track layout ${rb.from.name} to ${rb.to.name}` });
 
-  // km ruler (route distance) and OP columns
-  const ruler = el("g", { class: "sch-ruler" }, svg);
-  let lastPx = -Infinity;
-  for (let km = 0; km * 1000 <= s.length; km++) {
-    const p = sx(km * 1000);
-    if (p - lastPx < 56) continue;
-    lastPx = p;
-    el("line", { x1: p, x2: p, y1: height - BOTTOM + 6, y2: height - BOTTOM + 12 }, ruler);
-    el("text", { x: p, y: height - BOTTOM + 26, "text-anchor": "middle" }, ruler).textContent = `${km} km`;
-  }
+  // OP columns (their names go in the top band, drawn last)
   const ops = el("g", { class: "sch-ops" }, svg);
+  const opLabels: Array<{ x: number; y: number; kind: string; name: string; tip: string }> = [];
   const opItems = rb.items.filter((i) => i.kind === "op" || i.kind === "origin" || i.kind === "destination");
   const opNames = opItems.map((i) => (i.label ?? "").replace(/^(Depart|Arrive)\s+/i, ""));
   const rows = labelRows(opItems.map((i, k) => ({ x: sx(i.distance), width: textWidth(opNames[k]!, 12) })), OP_ROWS);
@@ -260,10 +255,32 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
       title(line, tip);
       return;
     }
-    const t = el("text", { x: p, y: 18 + rows[k]! * 18, "text-anchor": "middle", class: `sch-op kind-${i.kind}` }, ops);
-    t.textContent = name;
-    title(t, tip);
+    opLabels.push({ x: p, y: 18 + rows[k]! * 18, kind: i.kind, name, tip });
   });
+
+  // tunnels: a band behind the route
+  const tunnels = el("g", { class: "sch-tunnels" }, svg);
+  const open = new Map<string, number>();
+  for (const i of rb.items) {
+    if (i.kind !== "tunnel") continue;
+    const b = i.data?.["boundary"];
+    const key = i.source ?? i.label ?? "";
+    let span: [number, number] | undefined;
+    if (b === "enter") open.set(key, i.distance);
+    else if (b === "exit") span = [open.get(key) ?? 0, i.distance];
+    else if (b === "inside at start") span = [0, Math.max(i.distance, ...rb.items.filter((j) => j.kind === "tunnel" && j.source === i.source && j.data?.["boundary"] === "exit").map((j) => j.distance))];
+    else if (b === "inside at end") span = [i.distance, s.length];
+    if (b === "exit") open.delete(key);
+    if (!span) continue;
+    const x0 = sx(span[0]), x1 = sx(span[1]);
+    const r = el("rect", { x: x0, y: sy(0) - 9, width: Math.max(2, x1 - x0), height: 18, rx: 3, class: "sch-tunnel" }, tunnels);
+    title(r, `Tunnel ${i.label ?? ""} · ${((span[1] - span[0]) / 1000).toFixed(2)} km`);
+  }
+  for (const [key, d] of open) {
+    const it = rb.items.find((j) => j.kind === "tunnel" && (j.source ?? j.label) === key);
+    const x0 = sx(d), x1 = sx(s.length);
+    title(el("rect", { x: x0, y: sy(0) - 9, width: Math.max(2, x1 - x0), height: 18, rx: 3, class: "sch-tunnel" }, tunnels), `Tunnel ${it?.label ?? ""}`);
+  }
 
   // tracks: off-route first, the route on top
   const layer = el("g", { class: "sch-tracks" }, svg);
@@ -283,6 +300,13 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
         if (Math.abs(p[1] - q[1]) < 0.5 && (!best || Math.abs(q[0] - p[0]) > best[1] - best[0])) best = [Math.min(p[0], q[0]), Math.max(p[0], q[0]), p[1]];
       }
       if (best) trackLabels.push({ x0: best[0], x1: best[1], y: best[2], text: t.track });
+    }
+    if (t.towards) {
+      // where a line that leaves the view goes
+      const [a, b] = [pts.at(-2) ?? pts[0]!, pts.at(-1)!];
+      const right = b[0] >= a[0];
+      const tx = el("text", { x: b[0] + (right ? 3 : -3), y: b[1] + 3, "text-anchor": right ? "start" : "end", class: "sch-towards" }, labels);
+      tx.textContent = right ? `${t.towards} →` : `← ${t.towards}`;
     }
   }
 
@@ -325,16 +349,79 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     if (i.kind !== "signal") continue;
     const p = sx(i.distance), y = sy(0);
     const both = i.data?.["direction"] === "both";
-    const g = el("g", { transform: `translate(${p.toFixed(1)},${y})` }, sig);
+    const type = String(i.data?.["signalType"] ?? "");
+    const g = el("g", { transform: `translate(${p.toFixed(1)},${y})`, class: type ? `type-${type}` : "" }, sig);
     el("path", { d: "M0,4 V12 M0,12 h5", class: "sch-signal" }, g);
     if (both) el("path", { d: "M0,-4 V-12 M0,-12 h-5", class: "sch-signal" }, g);
-    title(g, `Signal ${i.label ?? ""} · ${(i.distance / 1000).toFixed(3)} km${both ? " · both directions" : ""}`);
+    title(g, `Signal ${i.label ?? ""}${type ? ` (${type})` : ""} · ${(i.distance / 1000).toFixed(3)} km${both ? " · both directions" : ""}`);
     if (opts.zoom >= SIGNAL_LABEL_ZOOM && i.label) {
       const text = i.label.replace(/^[^\s-]+-/, "");
       const half = textWidth(text, 9) / 2 + 1;
       if (space.place(p - half, y + 14, p + half, y + 24)) el("text", { x: p, y: y + 23, "text-anchor": "middle", class: "sch-signal-label" }, labels).textContent = text;
     }
   }
+
+  // level crossings: two bars across the route
+  const lcs = el("g", { class: "sch-lcs" }, svg);
+  for (const i of rb.items) {
+    if (i.kind !== "levelCrossing") continue;
+    const g = el("g", { transform: `translate(${sx(i.distance).toFixed(1)},${sy(0)})`, class: "sch-lc" }, lcs);
+    el("path", { d: "M-3,-9 V9 M3,-9 V9" }, g);
+    title(g, `Level crossing ${i.label ?? ""} · ${(i.distance / 1000).toFixed(3)} km`);
+  }
+
+  // top band: OP names, kept at the top of the view while scrolling down
+  const top = el("g", { class: "sch-band sch-band-top" }, svg);
+  el("rect", { x: 0, y: 0, width, height: TOP - 14, class: "sch-band-bg" }, top);
+  for (const l of opLabels) {
+    const t = el("text", { x: l.x, y: l.y, "text-anchor": "middle", class: `sch-op kind-${l.kind}` }, top);
+    t.textContent = l.name;
+    title(t, l.tip);
+  }
+
+  // bottom band: line, speed and gradient along the route, and the km ruler, kept at the bottom of the view
+  const bottom = el("g", { class: "sch-band sch-band-bottom" }, svg);
+  const base = height - BOTTOM;
+  el("rect", { x: 0, y: base, width, height: BOTTOM, class: "sch-band-bg" }, bottom);
+  el("line", { x1: 0, x2: width, y1: base, y2: base, class: "sch-band-edge" }, bottom);
+  const names = el("g", { class: "sch-band-names" });
+  el("rect", { x: 0, y: base + 1, width: 34, height: BAND_ROWS.length * ROW, class: "sch-band-bg" }, names);
+  BAND_ROWS.forEach((row, r) => {
+    const y = base + r * ROW + 13;
+    el("text", { x: 4, y, class: "sch-band-name" }, names).textContent = row === "line" ? "Line" : row === "speed" ? "km/h" : "‰";
+    let free = PAD - 4;
+    for (const i of rb.items) {
+      if (i.kind !== row) continue;
+      const p = sx(i.distance);
+      const text = row === "speed" ? String(i.data?.["speed"] ?? i.label ?? "") : row === "gradient" ? (i.label ?? "").replace(/\s*‰$/, "") : (i.label ?? "");
+      el("line", { x1: p, x2: p, y1: y - 10, y2: y + 2, class: "sch-band-tick" }, bottom);
+      const w = textWidth(text, 10);
+      if (p + 2 < free) continue;
+      const t = el("text", { x: p + 2, y, class: `sch-band-value kind-${row}` }, bottom);
+      t.textContent = text;
+      title(t, `${i.label ?? text} · ${(i.distance / 1000).toFixed(3)} km`);
+      free = p + 2 + w + 6;
+    }
+  });
+  bottom.append(names);
+  const rulerY = base + BAND_ROWS.length * ROW;
+  let lastPx = -Infinity;
+  for (let km = 0; km * 1000 <= s.length; km++) {
+    const p = sx(km * 1000);
+    if (p - lastPx < 56) continue;
+    lastPx = p;
+    el("line", { x1: p, x2: p, y1: rulerY + 4, y2: rulerY + 10, class: "sch-ruler-tick" }, bottom);
+    el("text", { x: p, y: rulerY + 24, "text-anchor": "middle", class: "sch-ruler-text" }, bottom).textContent = `${km} km`;
+  }
+  // keep both bands in view: the top band moves down with the vertical scroll, the bottom band up
+  const stick = () => {
+    const down = Math.max(0, Math.min(root.scrollTop, height - BOTTOM - TOP));
+    top.setAttribute("transform", `translate(0,${down})`);
+    const up = Math.min(0, root.scrollTop + root.clientHeight - height);
+    bottom.setAttribute("transform", `translate(0,${Math.max(up, TOP - base)})`);
+    names.setAttribute("transform", `translate(${root.scrollLeft},0)`);
+  };
+  root.onscroll = stick;
 
   const marker = el("line", { y1: TOP - 10, y2: height - BOTTOM, class: "sch-marker", visibility: "hidden" }, svg);
   const moveMarker = (d: number | undefined) => {
@@ -357,6 +444,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   });
 
   root.replaceChildren(svg);
+  stick();
   moveMarker(opts.selectedDistance);
   return { moveMarker, distanceAt: (px) => scale.invert(px - PAD), pxAt: (d) => sx(d) };
 }

@@ -153,7 +153,7 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
   const { ex, byElem, laid } = core;
   const timeLimit = opts.timeLimit ?? 0.5;
   const cutGap = opts.cutGap ?? 1000;
-  const Y = 2 * ex.maxLanes + 4;
+  const Y = 2 * (Number.isFinite(ex.maxLanes) ? ex.maxLanes : Math.max(-core.schematic.minLane, core.schematic.maxLane, 1)) + 4;
   const M = 2 * Y + 2;
   const minRun = ex.minRun;
 

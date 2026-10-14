@@ -79,7 +79,7 @@ export class RouteEngine {
 
   /** Schematic track layout around a computed route (the fast heuristic layout). */
   schematic(result: RouteResult): Schematic {
-    return layoutRouteSchematic(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks });
+    return layoutRouteSchematic(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks, ops: this.snapshot.ops });
   }
 
   /**
@@ -88,7 +88,7 @@ export class RouteEngine {
    * Worker). The promise falls back to the heuristic layout when solving fails.
    */
   schematics(result: RouteResult, solver: LpSolver): { heuristic: Schematic; solved: Promise<Schematic> } {
-    const prep = prepareSolvedLayout(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks });
+    const prep = prepareSolvedLayout(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks, ops: this.snapshot.ops });
     const solved = prep.problems.length
       ? solver(prep.problems).then(prep.finish, () => prep.heuristic)
       : Promise.resolve(prep.heuristic);

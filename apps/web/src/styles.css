@@ -86,6 +86,7 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 .sch-switch { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
 .sch-switch.route-deviates { fill: #fdebd0; }
 .sch-switch-label, .sch-track-label { font-size: 10px; fill: var(--muted); pointer-events: none; }
+.sch-towards { font-size: 10px; font-style: italic; fill: var(--muted); pointer-events: none; }
 .sch-signal-label { font-size: 9px; fill: #1e8449; pointer-events: none; }
 .sch-crossing path { fill: none; stroke: var(--ink); stroke-width: 1.5; }
 .sch-tools .btn:not(.icon) { min-height: 36px; padding: 0 12px; }
@@ -93,9 +94,20 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 .sch-op.kind-origin { fill: var(--from); } .sch-op.kind-destination { fill: var(--to); }
 .sch-op-line { stroke: #c9d3dc; stroke-dasharray: 2 4; }
 .sch-signal { fill: none; stroke: #1e8449; stroke-width: 1.5; }
-.sch-ruler line { stroke: var(--muted); }
-.sch-ruler text { font-size: 11px; fill: var(--muted); }
 .sch-marker { stroke: #b7950b; stroke-width: 2; }
+.sch-band-bg { fill: var(--bg); }
+.sch-band-edge { stroke: var(--line); }
+.sch-band-name { font-size: 9px; font-weight: 600; fill: var(--muted); }
+.sch-band-tick { stroke: #c9d3dc; }
+.sch-band-value { font-size: 10px; fill: var(--ink); }
+.sch-band-value.kind-speed { font-weight: 600; fill: #1f618d; }
+.sch-band-value.kind-line { fill: var(--muted); }
+.sch-ruler-tick { stroke: var(--muted); }
+.sch-ruler-text { font-size: 11px; fill: var(--muted); }
+.sch-tunnel { fill: #e5e8eb; stroke: #c9d0d6; }
+.sch-lc path { stroke: var(--ink); stroke-width: 1.5; }
+.sch-signals .type-shunting .sch-signal { stroke: #7b8a97; }
+.sch-signals .type-intermediate .sch-signal, .sch-signals .type-distant .sch-signal { stroke: #d68910; }
 .panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); }
 .routebook { flex: 1; overflow: auto; padding: 0 12px 12px; }
 .panel-foot { font-size: 0.72rem; color: var(--muted); padding: 6px 12px; border-top: 1px solid var(--line); }

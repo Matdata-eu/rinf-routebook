@@ -157,13 +157,13 @@ describe.skipIf(!existsSync(SNAPSHOT))("schematic layout quality (Norway snapsho
   };
 
   for (const [a, b] of [["NOOSL", "NODRM"], ["NOOSL", "NOBRG"], ["NOHMR", "NOTND"]] as const) {
-    it(`${a}-${b}: sides agree with the geometry, no overlaps, lanes within -8..8, under 500 ms; the solver crosses and overlaps no more`, async () => {
+    it(`${a}-${b}: sides agree with the geometry, no overlaps, lanes within -25..25, under 500 ms; the solver crosses and overlaps no more`, async () => {
       await loadHighs(); // load the WebAssembly before timing
       const [q, s] = await measure(a, b);
       expect(q.sideOk / q.sideChecked).toBeGreaterThanOrEqual(0.95);
       expect(q.overlaps).toBe(0);
-      expect(q.minLane).toBeGreaterThanOrEqual(-8);
-      expect(q.maxLane).toBeLessThanOrEqual(8);
+      expect(q.minLane).toBeGreaterThanOrEqual(-25);
+      expect(q.maxLane).toBeLessThanOrEqual(25);
       expect(q.ms).toBeLessThan(500);
       expect(s.crossings).toBeLessThanOrEqual(q.crossings);
       expect(s.overlaps).toBeLessThanOrEqual(q.overlaps);
@@ -173,7 +173,7 @@ describe.skipIf(!existsSync(SNAPSHOT))("schematic layout quality (Norway snapsho
   }
 
   it("prints the numbers for more routes", async () => {
-    for (const [a, b] of [["NOTND", "NOBO"], ["NODRM", "NOOSL"], ["NOLLS", "NOOSL"], ["NOSTV", "NOEGS"]] as const) {
+    for (const [a, b] of [["NOTND", "NOBO"], ["NODRM", "NOOSL"], ["NOLLS", "NOOSL"], ["NOSTV", "NOEGS"], ["NOSTV", "NOOSL"]] as const) {
       try {
         await measure(a, b);
       } catch (e) {

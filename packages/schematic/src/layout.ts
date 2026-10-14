@@ -32,6 +32,8 @@ export interface SchematicTrack {
   lane: number | null;
   /** The element leaves the corridor here: only its first metres are drawn. */
   stub?: boolean;
+  /** For a stub: the next operational point along the track beyond it (where the line goes). */
+  towards?: string;
   /**
    * Where the element changes lane along its length (a kink where the
    * topology next to it changes): its horizontal pieces in order from `from`
@@ -183,6 +185,8 @@ export interface Elem {
   lat: number;
   /** a crossover: deviating at both ends, one lane to the other, drawn as one diagonal */
   diagonal: boolean;
+  /** a stub: the next operational point along the track beyond it */
+  towards?: string;
 }
 
 export interface NodeInfo {
@@ -235,6 +239,8 @@ export interface LayoutInput {
   network: TopoNetwork;
   switches: SwitchInfo[];
   tracks: Track[];
+  /** Operational points, to name where a track that leaves the view goes (optional). */
+  ops?: Array<{ name: string; points?: Array<{ ne: string }>; areas?: Array<{ ne: string }> }>;
 }
 
 /**
@@ -266,6 +272,8 @@ export interface Explored {
   mainOf: (n: number) => Set<string>;
   /** screen side (+1 = up) of an end that branches off the straight pair */
   sigma: (n: number, r: EndRef) => 1 | -1;
+  /** x direction (+1 / -1) in which the element at end `r` leaves node `n` */
+  side: (n: number, r: EndRef) => 1 | -1;
   screenOf: (n: number, sw: SwitchInfo) => { deviates: 1 | -1; facing: boolean };
   /** number of ends of an element that branch off a straight pair (0..2) */
   branches: (e: Elem) => number;
@@ -278,7 +286,7 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
   const reach = opts.reach ?? 3000;
   const stubLength = opts.stubLength ?? 60;
   const minRun = opts.minRun ?? 40;
-  const maxLanes = opts.maxLanes ?? 6;
+  const maxLanes = opts.maxLanes ?? Infinity;
   const openLine = 400;
   const ends = (n: number) => net.nodes[n] ?? [];
   const switchAt = new Map(input.switches.filter((s) => ends(s.node).length === 3).map((s) => [s.node, s]));
@@ -287,6 +295,25 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
   const describe = (ne: string) => {
     const t = trackOf.get(ne);
     return { ...(t?.label ? { track: t.label } : {}), ...(t ? { kind: t.kind } : {}) };
+  };
+  const opsOf = new Map<string, string[]>();
+  for (const op of input.ops ?? []) for (const r of [...(op.points ?? []), ...(op.areas ?? [])]) opsOf.set(r.ne, [...(opsOf.get(r.ne) ?? []), op.name]);
+  const routeOps = new Set(route.steps.flatMap((st) => opsOf.get(st.ne) ?? []));
+  /** the first operational point along the track from end `r` on, other than those in `skip` (up to 30 km) */
+  const nextOp = (r: EndRef, skip: Set<string>): string | undefined => {
+    let cur: EndRef | undefined = r;
+    let dist = 0;
+    const seen = new Set<string>();
+    while (cur && dist < 30000 && !seen.has(cur.ne)) {
+      seen.add(cur.ne);
+      const hit = (opsOf.get(cur.ne) ?? []).find((n) => !skip.has(n));
+      if (hit) return hit;
+      dist += net.lengths.get(cur.ne) ?? 0;
+      const label: string | undefined = trackOf.get(cur.ne)?.label;
+      const next: EndRef[] = net.navigableFrom(otherEnd(cur));
+      cur = next.find((x: EndRef) => trackOf.get(x.ne)?.label === label) ?? next[0];
+    }
+    return undefined;
   };
 
   const first = route.steps[0];
@@ -385,7 +412,10 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
       } else {
         const farPt = net.endPoint(far);
         const proj = farPt ? project(rl, frame.xy(farPt), info.x - len - 500, info.x + len + 500) : undefined;
-        if (!proj || Math.abs(proj.lateral) > corridor || c + len > reach) e.stub = true;
+        if (!proj || Math.abs(proj.lateral) > corridor || c + len > reach) {
+          e.stub = true;
+          if (opsOf.size) e.towards = nextOp(end, new Set([...routeOps, ...(opsOf.get(end.ne) ?? [])]));
+        }
         else {
           e.m = m;
           nodes.set(m, { x: info.x + dir * len, sgn: (-dir * (groups(m).get(endKey(far)) ?? 1)) as 1 | -1, onRoute: false, arrival: far });
@@ -464,7 +494,7 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
   });
   return {
     route, net, minRun, maxLanes, stubLength, openLine, ends, switchAt, describe, routeTracks: tracks, routeNe, nodes, order, elems, elemAt,
-    mainOf, sigma, screenOf, branches,
+    mainOf, sigma, side, screenOf, branches,
   };
 }
 
@@ -799,10 +829,23 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
       tracks.push({ ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane: null, stub: true });
       return;
     }
+    if (e.conflict && e.m !== undefined && laid(e.n) && laid(e.m)) {
+      // its ends point the same way along x (a wye, or a loop back to the same node): no line can join
+      // them, so each end gets a short stub in the direction it leaves its node
+      for (const [n, end] of [[e.n, e.a], [e.m, far]] as const) {
+        const from = point(n);
+        const off = mainOf(n).has(endKey(end)) ? 0 : sigma(n, end) / 2;
+        const dir = n === e.n ? e.dir : ex.side(n, end);
+        const t: SchematicTrack = { ne: e.ne, ...describe(e.ne), onRoute: false, from, to: { x: from.x + dir * Math.min(e.len / 2, stubLength / 2), y: from.y + off }, lane: null, stub: true };
+        if (n === e.n) byElem.set(i, t);
+        tracks.push(t);
+      }
+      return;
+    }
     const { lane, runs } = placed;
     const from = point(e.n);
     const to = e.m !== undefined ? point(e.m) : { x: from.x + e.dir * Math.min(e.len, stubLength), y: runs?.at(-1)?.y ?? lane ?? 0 };
-    const t: SchematicTrack = { ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane, ...(e.stub ? { stub: true } : {}), ...(runs && runs.length > 1 ? { runs } : {}) };
+    const t: SchematicTrack = { ne: e.ne, ...describe(e.ne), onRoute: false, from, to, lane, ...(e.stub ? { stub: true } : {}), ...(e.towards ? { towards: e.towards } : {}), ...(runs && runs.length > 1 ? { runs } : {}) };
     byElem.set(i, t);
     tracks.push(t);
   });
