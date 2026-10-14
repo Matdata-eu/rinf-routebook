@@ -10,6 +10,7 @@ import { KIND_LABELS } from "./strip.js";
 import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
+import { DriveView } from "./drive-view.js";
 
 const params = new URLSearchParams(location.search);
 const COUNTRY = (params.get("country") ?? "nor").toLowerCase();
@@ -47,10 +48,24 @@ const style: StyleSpecification = {
   ],
 };
 
-const map = new maplibregl.Map({ container: "map", style, center: [10.0, 61.5], zoom: 4.6, attributionControl: { compact: true } });
+const map = new maplibregl.Map({ container: "map", style, center: [10.0, 61.5], zoom: 4.6, maxPitch: 80, attributionControl: { compact: true } });
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 if (import.meta.env.DEV) Object.assign(window, { routebookMap: map });
+
+/** Satnav-style follow view of the route (the Drive tab). */
+const drive = new DriveView(map, document.querySelector(".stage") as HTMLElement, {
+  onPassed: (index) => {
+    markSelected(panel, index);
+    const row = panel.querySelector<HTMLElement>(`.rb-row[data-index="${index}"]`);
+    // keep the row in view without fighting someone scrolling the routebook
+    if (row && !panel.matches(":hover")) panel.scrollTo({ top: row.offsetTop - panel.clientHeight / 3, behavior: "smooth" });
+  },
+  onPosition: (d) => {
+    driveAt = d;
+    syncUrl();
+  },
+});
 
 const empty = { type: "FeatureCollection" as const, features: [] };
 
@@ -76,7 +91,8 @@ function addLayers(snapshot: Snapshot): void {
   };
   map.addSource("sols", { type: "geojson", data: sols });
   map.addSource("ops", { type: "geojson", data: ops });
-  map.addSource("route", { type: "geojson", data: empty });
+  // lineMetrics: the Drive view colours the travelled part of the route by line-progress
+  map.addSource("route", { type: "geojson", data: empty, lineMetrics: true });
   map.addSource("endpoints", { type: "geojson", data: empty });
   map.addSource("selected", { type: "geojson", data: empty });
 
@@ -146,7 +162,14 @@ let searchIndex: SearchEntry[] = [];
 const opsById = new Map<string, OperationalPoint>();
 const selection: { from?: OperationalPoint; to?: OperationalPoint } = {};
 let result: RouteResult | undefined;
-let view: "map" | "schematic" = params.get("view") === "schematic" ? "schematic" : "map";
+type View = "map" | "schematic" | "drive";
+let view: View = params.get("view") === "schematic" ? "schematic" : params.get("view") === "drive" ? "drive" : "map";
+/** train position and autoplay from the URL, used for the first route only */
+let driveStart: { at?: number; play?: boolean } | undefined = {
+  ...(params.has("at") ? { at: Number(params.get("at")) || 0 } : {}),
+  ...(params.get("play") === "1" ? { play: true } : {}),
+};
+let driveAt: number | undefined;
 let schematic: { result: RouteResult; layout: Schematic } | undefined;
 /** HiGHS in a Web Worker: the schematic is drawn with the heuristic layout first, then redrawn with the solver layout. */
 const solver = workerSolver();
@@ -183,8 +206,11 @@ function syncUrl(): void {
     if (op) url.searchParams.set(role, op.uopid);
     else url.searchParams.delete(role);
   }
-  if (view === "schematic") url.searchParams.set("view", "schematic");
+  if (view !== "map") url.searchParams.set("view", view);
   else url.searchParams.delete("view");
+  if (view === "drive" && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
+  else url.searchParams.delete("at");
+  url.searchParams.delete("play");
   history.replaceState(null, "", url);
 }
 
@@ -205,6 +231,7 @@ function update(): void {
     (map.getSource("route") as GeoJSONSource | undefined)?.setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
+    if (view === "drive") drive.start(undefined);
     setState("ready", selection.from || selection.to ? "Pick the other end of the route." : "");
     return;
   }
@@ -228,12 +255,17 @@ function compute(): void {
     selectedDistance = undefined;
     drawRoutebook();
     drawSchematic();
+    if (view === "drive") {
+      drive.start(result, { at: 0, play: false, ...driveStart });
+      driveStart = undefined;
+    }
     setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)`);
   } catch (e) {
     result = undefined;
     (map.getSource("route") as GeoJSONSource).setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
+    if (view === "drive") drive.start(undefined);
     setState("error", e instanceof Error ? e.message : String(e));
   }
 }
@@ -249,6 +281,10 @@ function selectItem(index: number): void {
   const item = result?.routebook.items[index];
   if (!item || !result) return;
   markSelected(panel, index);
+  if (view === "drive") {
+    drive.seek(item.distance);
+    return;
+  }
   selectedDistance = item.distance;
   schematicView?.moveMarker(item.distance);
   const p = pointAtDistance(result.geometry, item.distance);
@@ -264,7 +300,7 @@ function fitRoute(): void {
   const b = result && bounds(result.geometry.coordinates);
   if (!b) return;
   if (view !== "map") {
-    mapNeedsFit = true; // a hidden map has no size to fit into
+    mapNeedsFit = view !== "drive" || mapNeedsFit; // a hidden map has no size to fit into
     return;
   }
   mapNeedsFit = false;
@@ -319,15 +355,22 @@ function drawSchematic(): void {
   });
 }
 
-function setView(next: "map" | "schematic"): void {
+function setView(next: View): void {
+  const leavingDrive = view === "drive" && next !== "drive";
   view = next;
-  $("map").hidden = next !== "map";
+  $("map").hidden = next === "schematic";
   $("schematic").hidden = next !== "schematic";
-  $("tab-map").setAttribute("aria-selected", String(next === "map"));
-  $("tab-schematic").setAttribute("aria-selected", String(next === "schematic"));
+  for (const v of ["map", "schematic", "drive"] as const) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+  if (next !== "drive") drive.stop();
   if (next === "map") {
     map.resize();
-    if (mapNeedsFit) fitRoute();
+    if (mapNeedsFit || leavingDrive) fitRoute();
+  } else if (next === "drive" && engine) {
+    map.resize();
+    if (selection.from && selection.to && result) {
+      drive.start(result, driveStart ?? {});
+      driveStart = undefined;
+    } else drive.start(undefined);
   }
   drawSchematic();
   syncUrl();
@@ -506,6 +549,7 @@ $("clear").addEventListener("click", () => {
 });
 $("tab-map").addEventListener("click", () => setView("map"));
 $("tab-schematic").addEventListener("click", () => setView("schematic"));
+$("tab-drive").addEventListener("click", () => setView("drive"));
 $("sch-in").addEventListener("click", () => zoomSchematic(1.5));
 $("sch-out").addEventListener("click", () => zoomSchematic(1 / 1.5));
 $("sch-fit").addEventListener("click", fitSchematic);
@@ -529,6 +573,7 @@ Promise.all([snapshotPromise, stylePromise])
     for (const op of snapshot.ops) opsById.set(op.id, op);
     searchIndex = buildSearchIndex(snapshot.ops);
     addLayers(snapshot);
+    drive.setNetwork(snapshot.geometry ?? {});
     $("meta").textContent = `RINF snapshot ${snapshot.meta.country}, fetched ${snapshot.meta.fetchedAt.slice(0, 10)}`;
     const find = (code: string | null) => (code ? snapshot.ops.find((o) => o.uopid.toLowerCase() === code.toLowerCase()) : undefined);
     const from = find(params.get("from"));

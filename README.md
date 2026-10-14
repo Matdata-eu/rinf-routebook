@@ -4,7 +4,7 @@
 
 ![Oslo S → Drammen](docs/screenshots/oslo-drammen.png)
 
-<sub>Oslo S → Drammen: route on the map (left) and the routebook strip (right) with distance, speed band, gradient band, line km and a quality flag per item. More: [schematic view](docs/screenshots/oslo-drammen-schematic.png), [Oslo S → Bergen](docs/screenshots/oslo-bergen.png), [tablet](docs/screenshots/oslo-drammen-tablet.png), [print view](docs/screenshots/oslo-drammen-print.png).</sub>
+<sub>Oslo S → Drammen: route on the map (left) and the routebook strip (right) with distance, speed band, gradient band, line km and a quality flag per item. More: [schematic view](docs/screenshots/oslo-drammen-schematic.png), [drive view](docs/screenshots/drive-chase.png), [Oslo S → Bergen](docs/screenshots/oslo-bergen.png), [tablet](docs/screenshots/oslo-drammen-tablet.png), [print view](docs/screenshots/oslo-drammen-print.png).</sub>
 
 ## Scope
 
@@ -43,6 +43,8 @@ Other commands:
 5. **Routebook:** features referenced on the traversed elements are placed by distance along the route. Signals are filtered by direction of travel. Tunnels are placed from their area coverage. Speed and gradient come from the running track. Each item is flagged as `rinf`, `derived`, `approximate` or `missing`.
 
 The **Schematic** tab shows the same route as a track diagram: the route as a straight line, the other tracks around it in lanes, with switches drawn as straight or turning branches on the correct side. RINF has no switch orientation, so this is derived from the topology and the track geometry; see [docs/architecture.md](docs/architecture.md#schematic).
+
+The **Drive** tab follows a little train along the route with a heading-up, tilted camera, like a satnav: the next signal, speed change, tunnel or station is shown with the distance to go, next to the simulated speed and the speed in force. The run is simulated at the RINF maximum speeds; see [screenshot](docs/screenshots/drive-cab.png).
 
 Routing runs in the browser in tens of milliseconds, for example 73 ms for Oslo S → Bergen (455 km, 3 800 items).
 

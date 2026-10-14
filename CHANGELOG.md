@@ -15,6 +15,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
   - A track that leaves the view is labelled with the next operational point along it (`towards`); an element of a wye is drawn as a stub at each end.
   - Crossings and slip switches (4-end nodes) keep their straight pair through and are listed in `Schematic.crossings`.
   - Solved layout (`layoutRouteSchematicSolved`): railplot's model (MIT) as a mixed-integer program solved by HiGHS (WebAssembly) per window of the route, with the heuristic layout as fallback; far fewer crossings and bends. `layoutMetrics` counts crossings, overlaps and bends of a drawn layout.
+- Web app: **Drive** tab (`?view=drive`, `&at=<metres>` for a position, `&play=1` to start running): a satnav-style, heading-up camera follows a little 3D train along the route.
+  - The routebook is read out as cues ahead, like turn instructions: next signal, speed change, tunnel, level crossing and operational point with the distance to go; speed signs, signals and OP names stand along the line.
+  - Speed cluster with the simulated speed, the speed in force, gradient and line; "In tunnel" banner; next stop with a rough time at line speed.
+  - Simulated run: accelerates to the RINF maximum speed, brakes ahead of lower speeds and at the destination (no train length, gradient or stops); play/pause (space), 1×–60×, scrub bar, Chase / Cab / Top cameras, mouse wheel zoom. The routebook strip follows the train, and clicking a row moves the train there.
 - Web app: **Schematic** tab next to the map (`?view=schematic`), with compressed open line, zoom, switch tooltips and selection linked to the routebook strip.
   - Ctrl / Cmd + mouse wheel zooms at the cursor; **Fit** zooms the whole route into the view.
   - Lane changes drawn horizontal, 45° diagonal, horizontal (crossovers and kinks too); labels that would overlap are left out, OP names use up to three rows.
