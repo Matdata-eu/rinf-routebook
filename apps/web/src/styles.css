@@ -107,7 +107,8 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 .sch-tunnel { fill: #e5e8eb; stroke: #c9d0d6; }
 .sch-lc path { stroke: var(--ink); stroke-width: 1.5; }
 .sch-signals .type-shunting .sch-signal { stroke: #7b8a97; }
-.sch-signals .type-intermediate .sch-signal, .sch-signals .type-distant .sch-signal { stroke: #d68910; }
+.sch-signals .type-distant .sch-signal { stroke: #d68910; }
+.sch-signal-label.main { font-weight: 600; }
 .panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); }
 .routebook { flex: 1; overflow: auto; padding: 0 12px 12px; }
 .panel-foot { font-size: 0.72rem; color: var(--muted); padding: 6px 12px; border-top: 1px solid var(--line); }

@@ -1,5 +1,5 @@
 import type { Schematic, SchematicTrack } from "@routebook/schematic";
-import type { Routebook } from "@routebook/routebook";
+import type { Routebook, RoutebookItem } from "@routebook/routebook";
 
 /**
  * Piecewise-linear x scale for the schematic: around switches and stations
@@ -145,8 +145,10 @@ const BAND_ROWS = ["line", "speed", "gradient"] as const;
 const BOTTOM = BAND_ROWS.length * ROW + 40;
 const PAD = 40;
 const OP_ROWS = 3;
-/** Zoom from which signal names are shown. */
+/** Zoom from which the names of other than main signals are shown. */
 const SIGNAL_LABEL_ZOOM = 2;
+/** Signal types that are main signals (Bane NOR hovedsignal): named at every zoom. */
+const MAIN_SIGNALS = new Set(["home", "intermediate", "exit", "block"]);
 
 function el<K extends keyof SVGElementTagNameMap>(name: K, attrs: Record<string, string | number>, parent?: Element): SVGElementTagNameMap[K] {
   const e = document.createElementNS(SVG, name);
@@ -343,22 +345,27 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     el("text", { x, y, "text-anchor": "middle", class: "sch-track-label" }, labels).textContent = l.text;
   }
 
-  // signals on the route: the mast on the right of the track for the direction it applies to (below = right of travel), the arm towards that direction
+  // signals on the route: the mast on the right of the track for the direction it applies to (below = right of travel), the arm towards that direction.
+  // Main signals (home, intermediate, exit, block) are named at every zoom, the others from SIGNAL_LABEL_ZOOM.
   const sig = el("g", { class: "sch-signals" }, svg);
-  for (const i of rb.items) {
-    if (i.kind !== "signal") continue;
+  const signals = rb.items.filter((i) => i.kind === "signal");
+  const isMain = (i: RoutebookItem) => MAIN_SIGNALS.has(String(i.data?.["signalType"] ?? ""));
+  for (const i of signals) {
     const p = sx(i.distance), y = sy(0);
     const both = i.data?.["direction"] === "both";
     const type = String(i.data?.["signalType"] ?? "");
-    const g = el("g", { transform: `translate(${p.toFixed(1)},${y})`, class: type ? `type-${type}` : "" }, sig);
+    const g = el("g", { transform: `translate(${p.toFixed(1)},${y})`, class: [type ? `type-${type}` : "", isMain(i) ? "main" : ""].filter(Boolean).join(" ") }, sig);
     el("path", { d: "M0,4 V12 M0,12 h5", class: "sch-signal" }, g);
     if (both) el("path", { d: "M0,-4 V-12 M0,-12 h-5", class: "sch-signal" }, g);
     title(g, `Signal ${i.label ?? ""}${type ? ` (${type})` : ""} · ${(i.distance / 1000).toFixed(3)} km${both ? " · both directions" : ""}`);
-    if (opts.zoom >= SIGNAL_LABEL_ZOOM && i.label) {
-      const text = i.label.replace(/^[^\s-]+-/, "");
-      const half = textWidth(text, 9) / 2 + 1;
-      if (space.place(p - half, y + 14, p + half, y + 24)) el("text", { x: p, y: y + 23, "text-anchor": "middle", class: "sch-signal-label" }, labels).textContent = text;
-    }
+  }
+  // labels: main signals first, so they win the space
+  for (const i of [...signals.filter(isMain), ...signals.filter((i) => !isMain(i))]) {
+    if (!i.label || (!isMain(i) && opts.zoom < SIGNAL_LABEL_ZOOM)) continue;
+    const p = sx(i.distance), y = sy(0);
+    const text = i.label.replace(/^[^\s-]+-/, "");
+    const half = textWidth(text, 9) / 2 + 1;
+    if (space.place(p - half, y + 14, p + half, y + 24)) el("text", { x: p, y: y + 23, "text-anchor": "middle", class: `sch-signal-label${isMain(i) ? " main" : ""}` }, labels).textContent = text;
   }
 
   // level crossings: two bars across the route

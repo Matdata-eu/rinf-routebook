@@ -20,7 +20,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
   - Lane changes drawn horizontal, 45° diagonal, horizontal (crossovers and kinks too); labels that would overlap are left out, OP names use up to three rows.
   - Crossings marked with an X; signals drawn on the right of the track for the direction of travel, with their names from zoom 2.
   - The schematic is drawn with the heuristic layout first and replaced by the solved layout, computed in a Web Worker.
-  - The OP names stay at the top and a bottom band with the line, speed (km/h), gradient (‰) and the km ruler stays at the bottom while scrolling vertically; tunnels are drawn as a band along the route, level crossings as two bars across it, and signals are coloured by type.
+  - The OP names stay at the top and a bottom band with the line, speed (km/h), gradient (‰) and the km ruler stays at the bottom while scrolling vertically; tunnels are drawn as a band along the route, level crossings as two bars across it, and signals are coloured by type; main signals (home, intermediate, exit, block) are named at every zoom, the others from zoom 2.
 - CLI: `routebook bundle` / `fetch` write `switches.json` (classified on full-resolution geometry); `pnpm bundle:nor`.
 
 ## [0.1.0] - 2026-10-13
