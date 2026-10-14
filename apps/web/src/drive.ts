@@ -38,23 +38,54 @@ export interface Along {
   progress(d: number): number;
 }
 
+/**
+ * Round the corners of a line: each inner vertex is replaced by two points
+ * up to `cut` metres before and after it, a few times over. Simplified RINF
+ * geometry turns in sharp kinks; a train running through them would jerk.
+ */
+export function roundCorners(coords: LngLat[], cut = 20, passes = 3): LngLat[] {
+  let line = coords;
+  for (let pass = 0; pass < passes; pass++) {
+    if (line.length < 3) return line;
+    const out: LngLat[] = [line[0]!];
+    for (let i = 1; i < line.length - 1; i++) {
+      const p = line[i - 1]!, c = line[i]!, n = line[i + 1]!;
+      const lp = metres(p, c), ln = metres(c, n);
+      const tp = lp > 0 ? Math.min(0.4, cut / lp) : 0;
+      const tn = ln > 0 ? Math.min(0.4, cut / ln) : 0;
+      out.push([c[0] + (p[0] - c[0]) * tp, c[1] + (p[1] - c[1]) * tp], [c[0] + (n[0] - c[0]) * tn, c[1] + (n[1] - c[1]) * tn]);
+    }
+    out.push(line.at(-1)!);
+    line = out;
+    cut /= 2;
+  }
+  return line;
+}
+
 export function along(rg: RouteGeometry): Along {
-  const steps = rg.steps.map((s) => {
-    const cum = [0];
-    for (let i = 1; i < s.coords.length; i++) cum.push(cum[i - 1]! + metres(s.coords[i - 1]!, s.coords[i]!));
-    return { ...s, cum };
-  });
-  // geometric offset of each step on the merged line
-  const geoStart: number[] = [];
+  // route distance -> distance along the drawn (unrounded) line, per step
+  const steps: Array<{ start: number; end: number; g0: number; g1: number }> = [];
+  const merged: LngLat[] = [];
   let geo = 0;
-  for (const s of steps) {
-    geoStart.push(geo);
-    geo += s.cum.at(-1)!;
+  for (const s of rg.steps) {
+    let len = 0;
+    for (let i = 1; i < s.coords.length; i++) len += metres(s.coords[i - 1]!, s.coords[i]!);
+    steps.push({ start: s.start, end: s.end, g0: geo, g1: geo + len });
+    geo += len;
+    for (const c of s.coords) {
+      const last = merged.at(-1);
+      if (!last || last[0] !== c[0] || last[1] !== c[1]) merged.push(c);
+    }
   }
   const length = steps.at(-1)?.end ?? 0;
+  const line = roundCorners(merged);
+  const cum = [0];
+  for (let i = 1; i < line.length; i++) cum.push(cum[i - 1]! + metres(line[i - 1]!, line[i]!));
+  const total = cum.at(-1) ?? 0;
 
-  /** step index and geometric distance inside it for route distance d */
-  const locate = (d: number): { i: number; g: number } => {
+  /** share (0..1) of the line before route distance d */
+  const share = (d: number): number => {
+    if (steps.length === 0 || geo <= 0) return 0;
     let lo = 0, hi = steps.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
@@ -63,18 +94,21 @@ export function along(rg: RouteGeometry): Along {
     }
     const s = steps[lo]!;
     const frac = s.end > s.start ? Math.max(0, Math.min(1, (d - s.start) / (s.end - s.start))) : 0;
-    return { i: lo, g: frac * s.cum.at(-1)! };
+    return (s.g0 + frac * (s.g1 - s.g0)) / geo;
   };
 
   const point = (d: number): LngLat => {
-    if (steps.length === 0) return [0, 0];
-    const { i, g } = locate(d);
-    const { coords, cum } = steps[i]!;
-    if (coords.length === 1) return coords[0]!;
-    let k = 1;
-    while (k < cum.length - 1 && cum[k]! < g) k++;
-    const a = coords[k - 1]!, b = coords[k]!;
-    const t = (g - cum[k - 1]!) / (cum[k]! - cum[k - 1]! || 1);
+    if (line.length === 0) return [0, 0];
+    if (line.length === 1) return line[0]!;
+    const g = share(d) * total;
+    let lo = 1, hi = cum.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid]! < g) lo = mid + 1;
+      else hi = mid;
+    }
+    const a = line[lo - 1]!, b = line[lo]!;
+    const t = (g - cum[lo - 1]!) / (cum[lo]! - cum[lo - 1]! || 1);
     return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
   };
 
@@ -86,11 +120,7 @@ export function along(rg: RouteGeometry): Along {
       const b = Math.min(length, Math.max(a + 1, d + ahead));
       return bearing(point(a), point(b));
     },
-    progress(d) {
-      if (geo <= 0) return 0;
-      const { i, g } = locate(d);
-      return Math.max(0, Math.min(1, (geoStart[i]! + g) / geo));
-    },
+    progress: (d) => Math.max(0, Math.min(1, share(d))),
   };
 }
 
@@ -330,7 +360,8 @@ export function trainParts(a: Along, d: number, style: TrainStyle = DEFAULT_TRAI
   const half = style.width / 2;
   const at = (s: number, side: number): LngLat => {
     const c = a.point(Math.max(0, s));
-    const h = a.heading(s, 3, 3) * DEG;
+    // over ±8 m, so the sides turn gradually where the simplified geometry has a corner
+    const h = a.heading(s, 8, 8) * DEG;
     // left of the direction of travel is (−cos, +sin) in (east, north)
     return offset(c, -Math.cos(h) * side, Math.sin(h) * side);
   };

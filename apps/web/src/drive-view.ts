@@ -2,6 +2,7 @@ import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from "maplibr
 import type { Routebook, RoutebookItem } from "@routebook/routebook";
 import type { RouteResult } from "./engine.js";
 import type { LngLat } from "./geometry.js";
+import { TrainLayer } from "./train-layer.js";
 import {
   along,
   angleDiff,
@@ -89,6 +90,7 @@ export class DriveView {
   private passed: number | undefined;
   private readonly markers = new Map<number, maplibregl.Marker>();
   private layersReady = false;
+  private readonly train = new TrainLayer("drive-train");
   private saved: { background?: unknown } = {};
   private reportedAt = -Infinity;
 
@@ -204,7 +206,7 @@ export class DriveView {
     this.run = undefined;
     this.passed = undefined;
     this.clearMarkers();
-    (this.map.getSource("drive-train") as GeoJSONSource | undefined)?.setData(emptyFc);
+    this.train.setParts([]);
   }
 
   private ensureLayers(): void {
@@ -241,18 +243,7 @@ export class DriveView {
         "line-gradient": this.routeGradient(0),
       },
     });
-    m.addSource("drive-train", { type: "geojson", data: emptyFc });
-    m.addLayer({
-      id: "drive-train",
-      type: "fill-extrusion",
-      source: "drive-train",
-      paint: {
-        "fill-extrusion-color": ["get", "color"],
-        "fill-extrusion-base": ["get", "base"],
-        "fill-extrusion-height": ["get", "height"],
-        "fill-extrusion-opacity": 1,
-      },
-    });
+    m.addLayer(this.train);
     m.setSky({ "sky-color": "#9fc5e8", "horizon-color": "#e8f1f8", "fog-color": "#e3e8df", "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.92, "atmosphere-blend": 0.6 });
   }
 
@@ -400,13 +391,9 @@ export class DriveView {
     else this.camBearing = (this.camBearing + angleDiff(this.camBearing, target) * (1 - Math.exp(-dt / 0.45)) + 360) % 360;
     const zoom = cam.zoom - cam.speedZoom * Math.min(1, sim.v / 55) + this.zoomBias;
     const h = m.getContainer().clientHeight;
+    // train and camera change in the same frame, so the train stands still on screen
+    this.train.setParts(trainParts(a, d));
     m.jumpTo({ center: a.point(d), bearing: this.camBearing, pitch: cam.pitch, zoom, padding: { top: h * cam.padTop, bottom: 0, left: 0, right: 0 } });
-
-    const parts = trainParts(a, d);
-    (m.getSource("drive-train") as GeoJSONSource).setData({
-      type: "FeatureCollection",
-      features: parts.map((p) => ({ type: "Feature", geometry: { type: "Polygon", coordinates: [p.ring] }, properties: { base: p.base, height: p.height, color: p.color } })),
-    });
 
     // speed cluster, every frame
     const kmh = Math.round(sim.v * 3.6);
