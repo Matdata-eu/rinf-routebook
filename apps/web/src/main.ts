@@ -11,6 +11,7 @@ import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
 import { DriveView } from "./drive-view.js";
+import { basemaps, pickBasemap, type Basemap } from "./basemaps.js";
 
 const params = new URLSearchParams(location.search);
 const COUNTRY = (params.get("country") ?? "nor").toLowerCase();
@@ -29,22 +30,17 @@ function setState(state: "loading" | "ready" | "routing" | "routed" | "error", m
 
 // ---------------------------------------------------------------- map
 
+const BASEMAPS = basemaps(import.meta.env);
+let basemap = pickBasemap(BASEMAPS, params.get("base"));
+
 const style: StyleSpecification = {
   version: 8,
   // key-free glyphs for OP labels; without network the labels are simply not drawn
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-  sources: {
-    osm: {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · RINF © ERA, data: Bane NOR',
-    },
-  },
+  sources: { basemap: basemap.source },
   layers: [
     { id: "bg", type: "background", paint: { "background-color": "#eef1f4" } },
-    { id: "osm", type: "raster", source: "osm", paint: { "raster-saturation": -0.85, "raster-opacity": 0.75 } },
+    { id: "basemap", type: "raster", source: "basemap", paint: basemap.paint },
   ],
 };
 
@@ -52,6 +48,39 @@ const map = new maplibregl.Map({ container: "map", style, center: [10.0, 61.5], 
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 if (import.meta.env.DEV) Object.assign(window, { routebookMap: map });
+map.addControl(basemapSwitch(), "top-right");
+
+const SOLS_COLOR = { plain: "#5b6b7b", aerial: "#f2f4f6" };
+
+/** Swap the background imagery in place, under the railway layers. */
+function setBasemap(next: Basemap): void {
+  if (next.id === basemap.id) return;
+  basemap = next;
+  if (map.getLayer("basemap")) map.removeLayer("basemap");
+  if (map.getSource("basemap")) map.removeSource("basemap");
+  map.addSource("basemap", next.source);
+  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: next.paint }, map.getLayer("sols") ? "sols" : undefined);
+  if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", next.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain);
+  document.querySelectorAll<HTMLButtonElement>(".basemap-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === next.id)));
+  syncUrl();
+}
+
+function basemapSwitch(): maplibregl.IControl {
+  const box = document.createElement("div");
+  box.className = "maplibregl-ctrl basemap-switch";
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", "Background map");
+  for (const b of BASEMAPS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = b.label;
+    btn.dataset.id = b.id;
+    btn.setAttribute("aria-pressed", String(b.id === basemap.id));
+    btn.addEventListener("click", () => setBasemap(b));
+    box.append(btn);
+  }
+  return { onAdd: () => box, onRemove: () => box.remove() };
+}
 
 /** Satnav-style follow view of the route (the Drive tab). */
 const drive = new DriveView(map, document.querySelector(".stage") as HTMLElement, {
@@ -96,7 +125,7 @@ function addLayers(snapshot: Snapshot): void {
   map.addSource("endpoints", { type: "geojson", data: empty });
   map.addSource("selected", { type: "geojson", data: empty });
 
-  map.addLayer({ id: "sols", type: "line", source: "sols", paint: { "line-color": "#5b6b7b", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
+  map.addLayer({ id: "sols", type: "line", source: "sols", paint: { "line-color": basemap.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
   map.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 6, 12, 12] } });
   map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#d35400", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 12, 7] } });
   map.addLayer({
@@ -211,6 +240,8 @@ function syncUrl(): void {
   if (view === "drive" && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
   else url.searchParams.delete("at");
   url.searchParams.delete("play");
+  if (basemap.id !== BASEMAPS[0]!.id) url.searchParams.set("base", basemap.id);
+  else url.searchParams.delete("base");
   history.replaceState(null, "", url);
 }
 

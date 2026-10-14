@@ -10,3 +10,4 @@ data/web/
 *.log
 .env
 .env.*
+!.env.example

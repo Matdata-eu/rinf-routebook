@@ -52,7 +52,13 @@ Routing runs in the browser in tens of milliseconds, for example 73 ms for Oslo 
 
 - Source: the [ERA knowledge graph](https://graph.data.era.europa.eu/) (`rinf-plus` SPARQL endpoint), ERA ontology v3.3.x.
 - RINF data © European Union Agency for Railways. The Norwegian data is provided by **Bane NOR** as infrastructure manager.
-- Map background © OpenStreetMap contributors.
+- Map background © OpenStreetMap contributors; satellite imagery: EOxCloudless 2016 by EOX IT Services GmbH (CC BY 4.0, contains modified Copernicus Sentinel data 2016 & 2017).
+
+### Background maps
+
+The map has a switch for its background: **Streets** (OpenStreetMap, greyed out) and **Satellite** (Sentinel-2 cloudless 2016 by EOX, 10 m pixels). Both need no key; the Sentinel-2 2016 mosaic is the only EOX year licensed CC BY 4.0, so it may also be used commercially with the attribution (later years are non-commercial only). `?base=satellite` opens the map on it.
+
+Aerial imagery sharp enough to see tracks and platforms is not free to redistribute, so the app does not ship any. Whoever deploys it can add an **Aerial** background with their own access in `apps/web/.env.local`, see [apps/web/.env.example](apps/web/.env.example): Esri World Imagery through an ArcGIS Location Platform API key, or any XYZ tile template, such as a Norge i bilder cache an organisation in Norge digitalt has access to. The key ends up in the browser, so restrict it to your own domains. The code stays MIT either way; the imagery terms are between the deployer and the provider.
 
 ### Known data gaps
 

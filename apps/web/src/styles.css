@@ -285,3 +285,11 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
   .drv-limit { width: 52px; height: 52px; font-size: 1rem; border-width: 6px; }
 }
 @media print { .drive-hud { display: none !important; } }
+/* ---------- background map switch (under the view tabs) */
+.maplibregl-ctrl-top-right { top: 46px; }
+.maplibregl-ctrl.basemap-switch { display: flex; background: #fff; border: 1px solid #b8c3cd; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgb(0 0 0 / 0.12); }
+.maplibregl-ctrl.basemap-switch button { width: auto; height: 30px; font: inherit; font-size: 0.8rem; padding: 0 10px; border: 0; background: #fff; color: var(--ink); cursor: pointer; }
+.maplibregl-ctrl.basemap-switch button + button { border-left: 1px solid #b8c3cd; }
+.maplibregl-ctrl.basemap-switch button[aria-pressed="true"] { background: #1f4e79; color: #fff; }
+.maplibregl-ctrl.basemap-switch button:not([aria-pressed="true"]):hover { background: #eef1f4; }
+@media print { .basemap-switch { display: none !important; } }

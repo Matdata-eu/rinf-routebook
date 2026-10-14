@@ -15,6 +15,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
   - A track that leaves the view is labelled with the next operational point along it (`towards`); an element of a wye is drawn as a stub at each end.
   - Crossings and slip switches (4-end nodes) keep their straight pair through and are listed in `Schematic.crossings`.
   - Solved layout (`layoutRouteSchematicSolved`): railplot's model (MIT) as a mixed-integer program solved by HiGHS (WebAssembly) per window of the route, with the heuristic layout as fallback; far fewer crossings and bends. `layoutMetrics` counts crossings, overlaps and bends of a drawn layout.
+- Web app: background map switch on the map (`?base=`): **Streets** (OSM) and **Satellite** (Sentinel-2 cloudless 2016 by EOX, CC BY 4.0, no key), plus an optional high-resolution **Aerial** background (Esri World Imagery with an API key, or any XYZ tile template such as Norge i bilder) configured in `apps/web/.env.local`.
 - Web app: **Drive** tab (`?view=drive`, `&at=<metres>` for a position, `&play=1` to start running): a satnav-style, heading-up camera follows a little 3D train along the route.
   - The routebook is read out as cues ahead, like turn instructions: next signal, speed change, tunnel, level crossing and operational point with the distance to go; speed signs, signals and OP names stand along the line.
   - Speed cluster with the simulated speed, the speed in force, gradient and line; "In tunnel" banner; next stop with a rough time at line speed.

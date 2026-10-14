@@ -101,4 +101,4 @@ A `RoutebookPlugin` can contribute:
 - Line km values can jump inside a span (e.g. in the Oslo tunnel). Fitted km values are therefore approximate.
 - There is no validity-date filtering yet (`era:validity` is ignored).
 - Routes are the shortest along the infrastructure, with no "usual passenger route" preference and no via points yet. For example, Oslo S → Bergen goes via Gjøvikbanen and Roa–Hønefoss.
-- The base map (OSM raster tiles) and the map label fonts need internet; everything else works offline.
+- The background maps (OSM raster tiles, Sentinel-2 cloudless, optional aerial imagery, see `apps/web/src/basemaps.ts`) and the map label fonts need internet; everything else works offline.
