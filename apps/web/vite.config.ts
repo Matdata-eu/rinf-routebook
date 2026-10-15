@@ -14,10 +14,10 @@ function routebookServer(): Plugin {
   return {
     name: "routebook-server",
     async configureServer(server) {
-      const serve = fileURLToPath(new URL("../../scripts/serve.mjs", import.meta.url));
+      // import() needs a file:// URL, not a path: on Windows "C:\\..." reads as a URL scheme
       const repo = fileURLToPath(new URL("../../", import.meta.url));
-      const { createHandler } = (await import(serve)) as { createHandler: (dir: string, opts?: { dataDir?: string }) => Handler };
-      const { loadConfig } = (await import(fileURLToPath(new URL("../../scripts/runtime-config.mjs", import.meta.url)))) as {
+      const { createHandler } = (await import(new URL("../../scripts/serve.mjs", import.meta.url).href)) as { createHandler: (dir: string, opts?: { dataDir?: string }) => Handler };
+      const { loadConfig } = (await import(new URL("../../scripts/runtime-config.mjs", import.meta.url).href)) as {
         loadConfig: (o: { cwd: string }) => object;
       };
       const handler = createHandler(`${repo}apps/web/dist`, { dataDir: process.env.ROUTEBOOK_DATA_DIR ?? `${repo}data`, config: loadConfig({ cwd: repo }) } as never);
