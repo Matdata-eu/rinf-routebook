@@ -10,6 +10,7 @@ Routebook is one small Node.js server. It serves the web app, the RINF data bund
 - [All settings](#all-settings)
 - [Without Docker](#without-docker)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
+- [GitHub Pages (static)](#github-pages-static)
 
 ## Docker Compose
 
@@ -54,6 +55,7 @@ The ERA knowledge graph holds one named graph per infrastructure manager (IM). A
 | `NOR` (any ISO 3166-1 alpha-3 code) | the graphs whose operational points are mainly in that country, looked up on the endpoint |
 | `0076` (an IM code) | that one graph |
 | `http://data.europa.eu/949/graph/0076` | that one graph |
+| `all` | every dataset on the endpoint, one per country (`routebook fetch-all`) |
 
 List what the endpoint has:
 
@@ -201,7 +203,7 @@ PORT=8080 node scripts/serve.mjs apps/web/dist
 
 The server reads `config.json` from the working directory (or `ROUTEBOOK_CONFIG_FILE`). `pnpm dev:web` uses the same `config.json` at the repository root, so you can try map layers while developing.
 
-The built app (`apps/web/dist`) can also be put on any static host together with the data bundles (`data/web`, including `datasets.json`) and a static `config.json` without `proxy` layers. You then lose the tile proxy, so keys would be public.
+The built app (`apps/web/dist`) can also be put on any static host: see [GitHub Pages (static)](#github-pages-static).
 
 ## Behind a reverse proxy
 
@@ -214,3 +216,18 @@ location /routebook/ {
 ```
 
 Responses for hashed assets carry long cache headers, the rest `no-cache`. The data bundles are a few MB per country; enable gzip in the proxy or let the Routebook server compress them (it does when the client asks).
+
+## GitHub Pages (static)
+
+The public demo, https://matdata-eu.github.io/rinf-routebook/, is published by [Matdata](https://matdata.eu) with the workflow [`.github/workflows/pages.yml`](../.github/workflows/pages.yml). Every Monday, and when run by hand, it:
+
+1. fetches every RINF dataset on the endpoint (`routebook fetch-all`; a country that fails is reported in the run summary and left out),
+2. builds the web app, which copies the data bundles into `apps/web/dist`,
+3. writes the static `config.json`, `privacy.html` and `datasets.json` with `node scripts/build-static.mjs apps/web/dist`, from [`deploy/github-pages/config.json`](../deploy/github-pages/config.json),
+4. deploys the result to GitHub Pages.
+
+The privacy statement of the demo is [`deploy/github-pages/privacy.html`](../deploy/github-pages/privacy.html): Matdata as the publisher, GitHub as the host, and the map tile and font providers the browser contacts. Keep it up to date when the site changes (new map layers, analytics, ...).
+
+To run it in a fork: set **Settings > Pages > Source** to **GitHub Actions**, replace the files in `deploy/github-pages/` with your own (your name in the privacy statement), and run the workflow. To try a few countries first, run it by hand with e.g. `NOR,BEL` as datasets.
+
+A static site has no server, so there is no tile proxy: layers with `"proxy": true` are left out, and everything in `config.json` is public. Do not put keys in it. Also check that publishing the RINF data fits ERA's reuse conditions for your use.

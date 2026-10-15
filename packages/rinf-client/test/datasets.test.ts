@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SparqlClient, countryGraph, discoverGraphs, graphIri, resolveDataset, writeDatasetIndex } from "@routebook/rinf-client";
+import { SparqlClient, allDatasets, countryGraph, countryName, discoverGraphs, graphIri, resolveDataset, writeDatasetIndex } from "@routebook/rinf-client";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +66,7 @@ describe("datasets", () => {
       { g: `${G}0099`, country: "SWE", ops: 20 },
     ]);
     const swe = await resolveDataset("swe", client);
-    expect(swe).toMatchObject({ code: "SWE", country: "SWE", graphs: [`${G}0074`, `${G}0099`] });
+    expect(swe).toMatchObject({ code: "SWE", name: "Sweden", country: "SWE", graphs: [`${G}0074`, `${G}0099`] });
     await expect(resolveDataset("BEL", client)).rejects.toThrow(/No RINF graph/);
     await expect(resolveDataset("nope!", client)).rejects.toThrow(/not a country code/);
   });
@@ -80,6 +80,27 @@ describe("datasets", () => {
       name: "Benelux",
       graphs: [`${G}0088`, `${G}0084`],
     });
+  });
+
+  it("names countries and groups every graph on the endpoint into one dataset per country", () => {
+    expect(countryName("deu")).toBe("Germany");
+    expect(countryName("XYZ")).toBe("XYZ");
+    const all = allDatasets([
+      { graph: `${G}0074`, ops: 900, countries: ["SWE"] },
+      { graph: `${G}0076`, ops: 734, countries: ["NOR", "SWE"] },
+      { graph: `${G}0099`, ops: 20, countries: ["SWE"] },
+      { graph: `${G}0042`, ops: 3, countries: [] },
+    ]);
+    expect(all.map((d) => [d.code, d.name, d.graphs ?? [d.graph]])).toEqual([
+      ["0042", "RINF graph 0042", [`${G}0042`]],
+      ["NOR", "Norway", [`${G}0076`]],
+      ["SWE", "Sweden", [`${G}0074`, `${G}0099`]],
+    ]);
+    // the checked dataset keeps its infrastructure manager while its graphs are unchanged
+    expect(all.find((d) => d.code === "NOR")?.imName).toBe("Bane NOR");
+    const more = allDatasets([{ graph: `${G}0076`, ops: 5, countries: ["NOR"] }, { graph: `${G}0077`, ops: 5, countries: ["NOR"] }]);
+    expect(more[0]).toMatchObject({ code: "NOR", name: "Norway", graphs: [`${G}0076`, `${G}0077`] });
+    expect(more[0]?.imName).toBeUndefined();
   });
 
   it("indexes the web bundles for the dataset picker", async () => {

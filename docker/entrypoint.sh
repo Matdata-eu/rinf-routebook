@@ -12,7 +12,15 @@ case "${1:-serve}" in
   *) exec "$@" ;;
 esac
 
-# ROUTEBOOK_DATASETS: space or comma separated, e.g. "NOR" or "NOR,0088". ROUTEBOOK_REFRESH=1 fetches them again.
+# ROUTEBOOK_DATASETS: space or comma separated, e.g. "NOR" or "NOR,0088", or "all" for every RINF
+# dataset on the endpoint. ROUTEBOOK_REFRESH=1 fetches them again.
+if [ "$(echo "${ROUTEBOOK_DATASETS:-}" | tr 'A-Z' 'a-z')" = "all" ]; then
+  if [ "${ROUTEBOOK_REFRESH:-0}" = "1" ] || [ ! -f "$ROUTEBOOK_DATA_DIR/web/datasets.json" ]; then
+    echo "Fetching every RINF dataset (this takes a while: one country after the other)..."
+    node apps/cli/dist/index.js fetch-all || echo "Could not fetch the RINF data; starting with the data that is there." >&2
+  fi
+  ROUTEBOOK_DATASETS=""
+fi
 for ds in $(echo "${ROUTEBOOK_DATASETS:-}" | tr ',' ' '); do
   id=$(echo "$ds" | tr 'A-Z' 'a-z')
   if [ "${ROUTEBOOK_REFRESH:-0}" = "1" ] || [ ! -f "$ROUTEBOOK_DATA_DIR/web/$id/meta.json" ]; then
