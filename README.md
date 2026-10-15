@@ -23,6 +23,8 @@ It works for any network the [ERA knowledge graph](https://graph.data.era.europa
 - **Your own privacy statement**, linked in the footer.
 - **Docker image** and Docker Compose file; a CLI to fetch data and print routebooks in the terminal.
 
+**Try it:** the public demo at **https://matdata-eu.github.io/rinf-routebook/** has the complete RINF data, refreshed every week. It is published by [Matdata](https://matdata.eu) and hosted on GitHub Pages ([privacy statement](https://matdata-eu.github.io/rinf-routebook/privacy.html)).
+
 ## Quick start with Docker
 
 ```bash
@@ -42,6 +44,7 @@ pnpm install
 pnpm build
 pnpm fetch:nor                              # one-off: download Norway from the ERA endpoint
 pnpm routebook fetch --dataset BEL          # ... or any other country, IM code or graph
+pnpm fetch:all                              # ... or all of RINF, one dataset per country
 pnpm dev:web                                # http://127.0.0.1:5173
 ```
 
@@ -49,6 +52,7 @@ pnpm dev:web                                # http://127.0.0.1:5173
 |---|---|
 | `pnpm routebook datasets` | Lists the RINF graphs on the endpoint, with their countries |
 | `pnpm routebook fetch --dataset <id>` | Fetches a dataset: an ISO 3166-1 alpha-3 country code, an IM code (`0076`) or a graph IRI; `--graph` (repeatable), `--name` and `--im` combine graphs into one dataset |
+| `pnpm fetch:all` | Fetches every RINF dataset on the endpoint, one per country (`--only` / `--skip` take dataset ids); a country that fails is reported and skipped |
 | `pnpm demo` | Builds everything and serves the app with the fetched data at http://127.0.0.1:4173. Routing works offline; only the map background tiles need internet. See [docs/demo.md](docs/demo.md). |
 | `pnpm routebook bundle --dataset <id>` | Rebuilds the web bundle from the local snapshot, including the switch classification used by the schematic view (`pnpm bundle:nor` for Norway) |
 | `pnpm route "Oslo S" Drammen --limit 40` | Prints a routebook in the terminal (`--dataset`, `--json`, `--kinds signal,switch`, `--area`, `--cost length`) |

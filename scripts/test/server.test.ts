@@ -6,6 +6,8 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { esriLayer, inBounds, loadConfig, loadPrivacy, parseTilePath, privacyPage, publicConfig, substituteEnv, tileBbox3857, upstreamUrl } from "../runtime-config.mjs";
 import { startServer } from "../serve.mjs";
+import { buildStatic } from "../build-static.mjs";
+import { readFile } from "node:fs/promises";
 
 const quiet = () => {};
 
@@ -121,5 +123,39 @@ describe("server", () => {
     expect(await tile.text()).toBe("tile /3/4/5.png");
     expect((await get("/tiles/other/3/4/5")).status).toBe(404);
     expect((await fetch(`${base(server)}/config.json`, { method: "POST" })).status).toBe(405);
+  });
+});
+
+describe("static build (GitHub Pages)", () => {
+  it("writes config.json without proxied layers, privacy.html and datasets.json", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "rbstatic-"));
+    await writeFile(join(repo, "privacy.html"), "<h1>Privacy statement</h1><p>Published by Matdata, hosted on GitHub Pages.</p>");
+    await writeFile(
+      join(repo, "config.json"),
+      JSON.stringify({
+        title: "Demo",
+        privacy: { file: "privacy.html" },
+        basemaps: [{ id: "keyed", tiles: ["https://k.test/{z}/{x}/{y}?key=${KEY}"], proxy: true }, { id: "open", tiles: ["https://o.test/{z}/{x}/{y}"] }],
+      }),
+    );
+    const dist = join(repo, "dist");
+    await mkdir(join(dist, "bel"), { recursive: true });
+    await writeFile(join(dist, "bel", "meta.json"), JSON.stringify({ country: "BEL", name: "Belgium", counts: { ops: 7 } }));
+    const config = loadConfig({ cwd: repo, log: quiet, env: { ROUTEBOOK_CONFIG_FILE: "config.json", KEY: "s3cret" } });
+    const out = buildStatic(dist, { config, log: quiet });
+    expect(out.dropped).toEqual(["keyed"]);
+    const written = await readFile(join(dist, "config.json"), "utf8");
+    expect(written).not.toContain("s3cret");
+    expect(JSON.parse(written)).toMatchObject({ title: "Demo", privacy: { label: "Privacy", url: "privacy.html" }, basemaps: [{ id: "open" }] });
+    const page = await readFile(join(dist, "privacy.html"), "utf8");
+    expect(page).toContain("<!doctype html>");
+    expect(page).toContain("hosted on GitHub Pages");
+    expect(JSON.parse(await readFile(join(dist, "datasets.json"), "utf8"))).toEqual([{ id: "bel", name: "Belgium", ops: 7 }]);
+  });
+
+  it("ships the Matdata privacy statement for the public demo", () => {
+    const cfg = loadConfig({ cwd: join(__dirname, "..", ".."), log: quiet, env: { ROUTEBOOK_CONFIG_FILE: "deploy/github-pages/config.json" } });
+    expect(cfg.privacy.html).toMatch(/Matdata/);
+    expect(cfg.privacy.html).toMatch(/GitHub Pages/);
   });
 });

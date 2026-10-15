@@ -19,6 +19,7 @@
     "typecheck": "pnpm -r run typecheck && tsc -p tsconfig.tests.json",
     "routebook": "pnpm --filter @routebook/cli start",
     "fetch:nor": "pnpm --filter @routebook/cli start fetch --dataset NOR",
+    "fetch:all": "pnpm --filter @routebook/cli start fetch-all",
     "bundle:nor": "pnpm --filter @routebook/cli start bundle --dataset NOR",
     "route": "pnpm --filter @routebook/cli start route",
     "dev:web": "pnpm --filter @routebook/web dev",

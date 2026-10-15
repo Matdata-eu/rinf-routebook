@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
+import { appendFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 import {
   DEFAULT_ENDPOINT,
   SparqlClient,
+  allDatasets,
   discoverGraphs,
   fetchSnapshot,
   graphsOf,
@@ -14,6 +16,7 @@ import {
   saveSnapshot,
   saveWebBundle,
   writeDatasetIndex,
+  type CountryGraph,
   type Snapshot,
 } from "@routebook/rinf-client";
 import { RoutingGraph, lengthCostModel, opEndpoint, resolveOp, trackPreferenceCostModel } from "@routebook/routing";
@@ -25,6 +28,8 @@ const HELP = `routebook <command> [options]
 Commands:
   datasets                  List the RINF named graphs on the endpoint, with their countries
   fetch                     Fetch a RINF snapshot from the ERA SPARQL endpoint (also writes the web bundle)
+  fetch-all                 Fetch every RINF dataset on the endpoint, one per country, one after the other;
+                            a dataset that fails is reported and skipped
   bundle                    Rebuild the compact web bundle (<data>/web/<dataset>) from the snapshot,
                             including the switch classification for the schematic view
   index                     Rewrite <data>/web/datasets.json (the datasets the web app offers)
@@ -38,6 +43,8 @@ Options:
   --graph <code|IRI>        Fetch exactly these named graphs (repeatable); --dataset is then the id
   --name <text>             Display name of the dataset (fetch)
   --im <text>               Infrastructure manager(s), shown in the data attribution (fetch)
+  --only <a,b>              Only these dataset ids (fetch-all)
+  --skip <a,b>              Leave these dataset ids out (fetch-all)
   --data <dir>              Data folder (default ./data, or ROUTEBOOK_DATA_DIR)
   --snapshot <dir>          Snapshot directory (default <data>/snapshots/<dataset>)
   --endpoint <url>          SPARQL endpoint (default ${DEFAULT_ENDPOINT}, or ROUTEBOOK_SPARQL_ENDPOINT)
@@ -64,6 +71,8 @@ async function main() {
       graph: { type: "string", multiple: true },
       name: { type: "string" },
       im: { type: "string" },
+      only: { type: "string" },
+      skip: { type: "string" },
       data: { type: "string" },
       snapshot: { type: "string" },
       endpoint: { type: "string" },
@@ -104,15 +113,9 @@ async function main() {
     return;
   }
 
-  if (cmd === "fetch") {
-    const lookup = new SparqlClient({ graph: "", ...(endpoint ? { endpoint } : {}) });
-    const dataset = await resolveDataset(id, lookup, {
-      ...(values.graph?.length ? { graphs: values.graph } : {}),
-      ...(values.name ? { name: values.name } : {}),
-      ...(values.im ? { imName: values.im } : {}),
-    });
-    if (!values.snapshot) dir = join(dataRoot, "snapshots", folder(dataset.code));
-    webDir = join(webRoot, folder(dataset.code));
+  /** Fetch one dataset and write its snapshot, web bundle and the dataset index. */
+  const fetchDataset = async (dataset: CountryGraph, snapshotDir = join(dataRoot, "snapshots", folder(dataset.code))) => {
+    const out = join(webRoot, folder(dataset.code));
     const graphs = graphsOf(dataset);
     const client = new SparqlClient({ graph: graphs[0]!, graphs, ...(endpoint ? { endpoint } : {}) });
     console.error(`Fetching ${dataset.name} (${graphs.join(", ")}) from ${client.endpoint}`);
@@ -124,11 +127,65 @@ async function main() {
       ...(dataset.imName ? { imName: dataset.imName } : {}),
       onProgress: (step, rows) => console.error(`  ${step.padEnd(16)} ${rows} rows`),
     });
-    await saveSnapshot(dir, snapshot);
-    await saveWebBundle(webDir, snapshot, webExtras(snapshot));
+    await saveSnapshot(snapshotDir, snapshot);
+    await saveWebBundle(out, snapshot, webExtras(snapshot));
     await writeDatasetIndex(webRoot);
-    console.error(`Saved to ${dir} and ${webDir} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    const seconds = (Date.now() - t0) / 1000;
+    console.error(`Saved to ${snapshotDir} and ${out} in ${seconds.toFixed(0)} s`);
+    return { snapshot, seconds };
+  };
+
+  if (cmd === "fetch") {
+    const lookup = new SparqlClient({ graph: "", ...(endpoint ? { endpoint } : {}) });
+    const dataset = await resolveDataset(id, lookup, {
+      ...(values.graph?.length ? { graphs: values.graph } : {}),
+      ...(values.name ? { name: values.name } : {}),
+      ...(values.im ? { imName: values.im } : {}),
+    });
+    const { snapshot } = await fetchDataset(dataset, values.snapshot ? dir : undefined);
     console.log(JSON.stringify(snapshot.meta.counts));
+    return;
+  }
+
+  if (cmd === "fetch-all") {
+    const lookup = new SparqlClient({ graph: "", ...(endpoint ? { endpoint } : {}) });
+    const ids = (list?: string) => new Set((list ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean));
+    const only = ids(values.only);
+    const skip = ids(values.skip);
+    const datasets = allDatasets(await discoverGraphs(lookup)).filter((d) => (!only.size || only.has(d.code)) && !skip.has(d.code));
+    if (!datasets.length) throw new Error(`No RINF datasets to fetch on ${lookup.endpoint}${only.size ? ` (--only ${[...only].join(",")})` : ""}`);
+    console.error(`${datasets.length} datasets: ${datasets.map((d) => d.code).join(", ")}`);
+    const results: Array<{ dataset: CountryGraph; ops?: number; seconds?: number; error?: string }> = [];
+    for (const dataset of datasets) {
+      // one retry: the endpoint occasionally times out or drops a long query
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const { snapshot, seconds } = await fetchDataset(dataset);
+          results.push({ dataset, ops: snapshot.meta.counts.ops, seconds });
+          break;
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          console.error(`  ${dataset.code} failed (attempt ${attempt}): ${error}`);
+          if (attempt >= 2) {
+            results.push({ dataset, error });
+            break;
+          }
+        }
+      }
+    }
+    const ok = results.filter((r) => !r.error);
+    const lines = [
+      `| Dataset | Graphs | Operational points | Time |`,
+      `| --- | --- | ---: | ---: |`,
+      ...results.map((r) =>
+        `| ${r.dataset.name} (${r.dataset.code}) | ${graphsOf(r.dataset).map((g) => g.slice(g.lastIndexOf("/") + 1)).join(", ")} | ${r.error ? `failed: ${r.error.replace(/[|\n]/g, " ").slice(0, 200)}` : r.ops} | ${r.seconds !== undefined ? `${r.seconds.toFixed(0)} s` : ""} |`,
+      ),
+    ];
+    console.log(`Fetched ${ok.length} of ${results.length} RINF datasets\n\n${lines.join("\n")}`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `### RINF data: ${ok.length} of ${results.length} datasets\n\n${lines.join("\n")}\n`);
+    }
+    if (!ok.length) process.exit(1);
     return;
   }
 

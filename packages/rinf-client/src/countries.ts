@@ -39,6 +39,21 @@ export const COUNTRIES: Record<string, CountryGraph> = {
   },
 };
 
+/** English names of the countries that report to RINF (ISO 3166-1 alpha-3), for dataset names. */
+export const COUNTRY_NAMES: Record<string, string> = {
+  ALB: "Albania", AUT: "Austria", BEL: "Belgium", BGR: "Bulgaria", BIH: "Bosnia and Herzegovina", CHE: "Switzerland",
+  CZE: "Czechia", DEU: "Germany", DNK: "Denmark", ESP: "Spain", EST: "Estonia", FIN: "Finland", FRA: "France",
+  GBR: "United Kingdom", GRC: "Greece", HRV: "Croatia", HUN: "Hungary", IRL: "Ireland", ITA: "Italy",
+  LIE: "Liechtenstein", LTU: "Lithuania", LUX: "Luxembourg", LVA: "Latvia", MKD: "North Macedonia", MNE: "Montenegro",
+  NLD: "Netherlands", NOR: "Norway", POL: "Poland", PRT: "Portugal", ROU: "Romania", SRB: "Serbia", SVK: "Slovakia",
+  SVN: "Slovenia", SWE: "Sweden", TUR: "Türkiye", UKR: "Ukraine",
+};
+
+/** The English name of an ISO 3166-1 alpha-3 country, or the code itself. */
+export function countryName(code: string): string {
+  return COUNTRY_NAMES[code.toUpperCase()] ?? code.toUpperCase();
+}
+
 export function graphsOf(c: CountryGraph): string[] {
   return c.graphs?.length ? c.graphs : [c.graph];
 }
@@ -127,5 +142,32 @@ export async function resolveDataset(spec: string, client: SparqlClient, opts: R
   const found = (await discoverGraphs(client)).filter((g) => g.countries[0] === country);
   if (!found.length) throw new Error(`No RINF graph on ${client.endpoint} has operational points in ${country}. Run "routebook datasets" to list them.`);
   const graphs = found.map((g) => g.graph);
-  return { code: country, name: opts.name ?? country, graph: graphs[0]!, graphs, country, ...extra };
+  return { ...countryDataset(country, graphs), ...(opts.name ? { name: opts.name } : {}), ...extra };
+}
+
+/** The dataset of one country made of these graphs; the known dataset when it has exactly these graphs. */
+function countryDataset(country: string, graphs: string[]): CountryGraph {
+  const known = knownDataset(country);
+  if (known && graphsOf(known).join(" ") === graphs.join(" ")) return known;
+  return { code: country, name: countryName(country), graph: graphs[0]!, graphs, country };
+}
+
+/**
+ * Every RINF dataset on the endpoint: one per country, made of the graphs whose operational
+ * points are mostly in that country, and one per graph that has no country information.
+ * Sorted by dataset id.
+ */
+export function allDatasets(found: GraphInfo[]): CountryGraph[] {
+  const byCountry = new Map<string, string[]>();
+  const loose: CountryGraph[] = [];
+  for (const g of found) {
+    const country = g.countries[0];
+    if (country && /^[A-Z]{3}$/.test(country)) byCountry.set(country, [...(byCountry.get(country) ?? []), g.graph]);
+    else {
+      const code = g.graph.slice(g.graph.lastIndexOf("/") + 1).toUpperCase();
+      loose.push({ code, name: `RINF graph ${code}`, graph: g.graph });
+    }
+  }
+  const out = [...byCountry].map(([country, graphs]) => countryDataset(country, [...graphs].sort()));
+  return [...out, ...loose].sort((a, b) => a.code.localeCompare(b.code));
 }
