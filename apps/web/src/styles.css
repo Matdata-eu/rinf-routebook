@@ -16,7 +16,31 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
-body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+body { display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; }
+
+/* ---------- demo disclaimer: hazard stripes, always on screen and on paper */
+.disclaimer {
+  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 12px; font-size: 0.85rem; font-weight: 600; color: #1d1d1d; background: #ffd21f;
+  border-top: 6px solid transparent; border-bottom: 1px solid #c9a200;
+  border-image: repeating-linear-gradient(135deg, #1d1d1d 0 14px, #ffd21f 14px 28px) 6 0 0 0;
+}
+.disclaimer[hidden] { display: none; }
+.dc-icon { font-size: 1.2rem; line-height: 1; }
+.dc-more {
+  font: inherit; font-size: 0.78rem; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid #1d1d1d; background: #fff8d6; color: #1d1d1d; cursor: pointer;
+}
+.dc-more:hover { background: #fff; }
+.dc-notice { width: min(640px, calc(100vw - 32px)); padding: 0 24px 20px; border: 0; border-radius: 10px; box-shadow: 0 16px 48px rgb(0 0 0 / 0.35); }
+.dc-notice::backdrop { background: rgb(0 0 0 / 0.55); }
+.dc-stripe { height: 14px; margin: 0 -24px 16px; background: repeating-linear-gradient(135deg, #1d1d1d 0 18px, #ffd21f 18px 36px); }
+.dc-notice h2 { margin: 0 0 10px; font-size: 1.3rem; }
+.dc-notice h2::before { content: "⚠ "; color: #c9a200; }
+.dc-notice p { margin: 0 0 10px; line-height: 1.45; }
+.dc-accept { margin-top: 8px; font-weight: 600; background: #ffd21f; border-color: #c9a200; }
+.dc-accept:hover { background: #ffdd55; }
+.print-stamp { display: none; }
 
 /* ---------- top bar */
 .topbar {
@@ -235,6 +259,13 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
   .kind-kmPost { min-height: 18px; }
   .band, .kind-line, .q, .kind-missing, .band-missing { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .panel-foot { border: 0; padding: 8px 0 0; }
+  .disclaimer { display: flex; border-image: none; border-top: 6px solid #1d1d1d; background: #ffd21f; -webkit-print-color-adjust: exact; print-color-adjust: exact; margin-bottom: 8px; }
+  .dc-more { display: none; }
+  .print-stamp {
+    display: block; position: fixed; top: 42%; left: 0; right: 0; z-index: 1; pointer-events: none; text-align: center;
+    transform: rotate(-28deg); font-size: 44pt; font-weight: 800; letter-spacing: 0.08em; color: rgb(201 162 0 / 0.28);
+  }
+  .print-stamp[hidden] { display: none; }
 }
 
 /* ---------- drive (satnav-style follow view) */

@@ -1,4 +1,5 @@
 {
   "title": "RINF Routebook by Matdata",
+  "disclaimer": { "publisher": "Matdata" },
   "privacy": { "label": "Privacy", "file": "privacy.html" }
 }

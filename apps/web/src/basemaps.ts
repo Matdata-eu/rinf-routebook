@@ -1,4 +1,5 @@
 import type { RasterLayerSpecification, RasterSourceSpecification, RequestParameters } from "maplibre-gl";
+import type { DisclaimerConfig } from "./disclaimer.js";
 
 /**
  * Background maps and overlays.
@@ -66,6 +67,11 @@ export interface RuntimeConfig {
   examples?: Record<string, Array<{ from: string; to: string; label?: string }>>;
   /** RINF Atlas instance the Datasets dialog links to (default: the public one); false for no links. */
   atlasUrl?: string | false;
+  /**
+   * The demo disclaimer (banner, notice to acknowledge, print stamp): on by default;
+   * `{ publisher, banner, title, text, print }` changes the wording, false switches it off.
+   */
+  disclaimer?: DisclaimerConfig | boolean;
 }
 
 /** Plain map: OSM, greyed out so the railway overlay stands out. Fine for a demo, not for heavy production use. */

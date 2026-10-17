@@ -92,6 +92,10 @@ RINF does not contain everything a professional routebook needs. The app lists t
 
 The app ships two backgrounds that need no key and allow commercial use: **Streets** (OpenStreetMap) and **Satellite** (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0). Aerial imagery sharp enough to see tracks and platforms is not free to redistribute, so deployers add their own: Esri World Imagery with an API key, a national orthophoto service, a company WMS or WMTS. Keys are kept on the server by its tile proxy. See [docs/deployment.md#map-layers](docs/deployment.md#map-layers). The code stays MIT either way; the imagery terms are between the deployer and the provider.
 
+## Disclaimer
+
+Routebook is a demonstration of what public RINF data can do. It is not meant for a production or operational environment: do not drive, plan or dispatch trains with it. The data is shown as the infrastructure managers published it through ERA; it may be incomplete, out of date or wrong, and the publisher of an instance does not manage it and is not responsible for it. The app, the routes and the routebooks are provided as they are, without any warranty (see the [licence](LICENSE)). The app says so itself: a hazard-striped banner, a notice on the first visit and a stamp on every printed routebook. Deployers can adapt the wording or switch it off in the configuration (`disclaimer` in [docs/deployment.md](docs/deployment.md#disclaimer)), and then give their own.
+
 ## Scope
 
 - **Open core (this repository, MIT):** the RINF client, routing, the routebook model, the plugin interface, the web app, the CLI and the Docker image. It only uses public RINF data, and it is useful on its own.
