@@ -711,8 +711,9 @@ function buildDatasetsButton(): void {
   } else btn.append("Datasets");
   if (summary.label && CATALOGUE.datasets.length > 1) {
     const badge = document.createElement("span");
-    badge.className = `badge${summary.problems ? " warn" : ""}`;
+    badge.className = `badge${summary.problems ? " warn" : summary.updating ? " updating" : ""}`;
     badge.textContent = summary.label;
+    if (summary.updating) badge.title = `${summary.updating} dataset${summary.updating === 1 ? "" : "s"} being updated`;
     btn.append(" ", badge);
   }
   btn.hidden = false;

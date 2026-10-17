@@ -1,11 +1,12 @@
 import { describe, expect, it, afterAll } from "vitest";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { esriLayer, inBounds, loadConfig, loadPrivacy, parseTilePath, privacyPage, publicConfig, substituteEnv, tileBbox3857, upstreamUrl } from "../runtime-config.mjs";
-import { startServer } from "../serve.mjs";
+import { health, startServer, startSync } from "../serve.mjs";
 import { buildStatic } from "../build-static.mjs";
 import { readFile } from "node:fs/promises";
 
@@ -123,6 +124,66 @@ describe("server", () => {
     expect(await tile.text()).toBe("tile /3/4/5.png");
     expect((await get("/tiles/other/3/4/5")).status).toBe(404);
     expect((await fetch(`${base(server)}/config.json`, { method: "POST" })).status).toBe(405);
+  });
+
+  it("sends precompressed bundle parts, validates ETags and reports the catalogue on /healthz", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "rbdist-"));
+    const data = await mkdtemp(join(tmpdir(), "rbdata-"));
+    await writeFile(join(dist, "index.html"), "<!doctype html>");
+    const nor = join(data, "web", "nor");
+    await mkdir(nor, { recursive: true });
+    const ops = JSON.stringify(Array.from({ length: 200 }, (_, i) => ({ i, name: `Station ${i}` })));
+    await writeFile(join(nor, "ops.json"), ops);
+    await writeFile(join(nor, "ops.json.gz"), gzipSync(ops));
+    await writeFile(join(nor, "ops.json.br"), brotliCompressSync(ops));
+    // a stale .br from an older bundle is ignored
+    await writeFile(join(nor, "lines.json"), "[1,2,3]");
+    await writeFile(join(nor, "lines.json.br"), brotliCompressSync("old"));
+    await utimes(join(nor, "lines.json.br"), new Date(2020, 0, 1), new Date(2020, 0, 1));
+    await writeFile(
+      join(data, "web", "datasets.json"),
+      JSON.stringify({ version: 2, checkedAt: "2026-10-17T10:00:00Z", datasets: [
+        { id: "nor", name: "Norway", fetchedAt: "t", ops: 1, status: "stale" },
+        { id: "bel", name: "Belgium", ops: 0, status: "failed", error: "timeout" },
+        { id: "fra", name: "France", ops: 0, status: "pending" },
+        { id: "old", name: "Old", fetchedAt: "t", ops: 1, status: "removed" },
+      ] }),
+    );
+    const server = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config: { basemaps: [], overlays: [] } });
+    servers.push(server);
+    const get = (p: string, headers: Record<string, string> = {}) => fetch(`${base(server)}${p}`, { headers, redirect: "manual" });
+
+    // node's fetch decompresses: check the headers and the bytes it got
+    const br = await get("/nor/ops.json", { "Accept-Encoding": "br" });
+    expect(br.headers.get("content-encoding")).toBe("br");
+    expect(br.headers.get("vary")).toBe("Accept-Encoding");
+    expect(await br.text()).toBe(ops);
+    const gz = await get("/nor/ops.json", { "Accept-Encoding": "gzip" });
+    expect(gz.headers.get("content-encoding")).toBe("gzip");
+    expect(Number(gz.headers.get("content-length"))).toBe(gzipSync(ops).length);
+    expect(await gz.text()).toBe(ops);
+    const plain = await get("/nor/ops.json", { "Accept-Encoding": "identity" });
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(await plain.text()).toBe(ops);
+    const stale = await get("/nor/lines.json", { "Accept-Encoding": "br, gzip" });
+    expect(stale.headers.get("content-encoding")).toBe("gzip"); // on the fly, not the stale .br
+    expect(await stale.text()).toBe("[1,2,3]");
+
+    const etag = plain.headers.get("etag")!;
+    expect(etag).toMatch(/^W\/"/);
+    const cached = await get("/nor/ops.json", { "If-None-Match": etag });
+    expect(cached.status).toBe(304);
+    expect((await get("/nor/ops.json", { "If-None-Match": 'W/"nope"' })).status).toBe(200);
+
+    expect(await (await get("/healthz")).json()).toEqual({ ok: true, checkedAt: "2026-10-17T10:00:00Z", datasets: 4, loaded: 1, failed: 1, stale: 1, pending: 1, removed: 1 });
+    expect(health([join(data, "web")], { state: () => ({ enabled: true, running: true }) }).sync).toEqual({ enabled: true, running: true });
+  });
+
+  it("runs the sync only when asked and says when the CLI is missing", () => {
+    expect(startSync({ minutes: 0 }).state()).toEqual({ enabled: false });
+    const messages: string[] = [];
+    expect(startSync({ minutes: 60, cli: "/nowhere/index.js", log: (m: string) => messages.push(m) }).state()).toMatchObject({ enabled: true, running: false });
+    expect(messages[0]).toContain("/nowhere/index.js");
   });
 });
 

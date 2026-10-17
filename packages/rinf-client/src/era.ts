@@ -76,6 +76,8 @@ export function parsePublished(json: unknown): PublishedDataset[] {
 export interface EraOptions {
   /** Dataset explorer API base; default: the one that belongs to the endpoint, or none. */
   datasetsApi?: string;
+  /** The explorer's answer, when already read (a sync reads it once for every dataset). */
+  published?: Map<string, PublishedDataset>;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -121,8 +123,8 @@ export async function graphProvenance(
   opts: EraOptions & { onWarning?: (message: string) => void } = {},
 ): Promise<GraphProvenance[]> {
   const api = opts.datasetsApi ?? datasetsApiFor(endpoint);
-  let published = new Map<string, PublishedDataset>();
-  if (api) {
+  let published = opts.published ?? new Map<string, PublishedDataset>();
+  if (api && !opts.published) {
     try {
       published = await publishedDatasets(api, opts);
     } catch (e) {
@@ -152,6 +154,22 @@ export async function graphProvenance(
     });
   }
   return out;
+}
+
+/**
+ * Whether ERA publishes something else than what was fetched: a graph whose fingerprint differs,
+ * or a graph added or dropped. Graphs without a fingerprint on either side cannot be compared and
+ * count as unchanged, so an unreachable explorer never triggers a refetch.
+ */
+export function fingerprintsDiffer(fetched: GraphProvenance[] | undefined, latest: GraphProvenance[]): boolean {
+  const had = new Map((fetched ?? []).map((g) => [g.graph, g.fingerprint]));
+  if (fetched && new Set(latest.map((g) => g.graph)).size !== had.size) return true;
+  for (const g of latest) {
+    if (fetched && !had.has(g.graph)) return true;
+    const before = had.get(g.graph);
+    if (before && g.fingerprint && before !== g.fingerprint) return true;
+  }
+  return false;
 }
 
 /** The latest publication date among the graphs of a dataset, or undefined. */
