@@ -16,6 +16,7 @@ import {
   saveSnapshot,
   saveWebBundle,
   writeDatasetIndex,
+  readCatalogue,
   type CountryGraph,
   type Snapshot,
 } from "@routebook/rinf-client";
@@ -32,7 +33,8 @@ Commands:
                             a dataset that fails is reported and skipped
   bundle                    Rebuild the compact web bundle (<data>/web/<dataset>) from the snapshot,
                             including the switch classification for the schematic view
-  index                     Rewrite <data>/web/datasets.json (the datasets the web app offers)
+  index                     Rewrite <data>/web/datasets.json (the datasets the web app offers, with
+                            what ERA published for each of them and the outcome of the last fetch)
   route <from> <to>         Route between two OPs (name, uopid or IRI) and print the routebook
   stats                     Topology statistics of the snapshot
 
@@ -48,6 +50,8 @@ Options:
   --data <dir>              Data folder (default ./data, or ROUTEBOOK_DATA_DIR)
   --snapshot <dir>          Snapshot directory (default <data>/snapshots/<dataset>)
   --endpoint <url>          SPARQL endpoint (default ${DEFAULT_ENDPOINT}, or ROUTEBOOK_SPARQL_ENDPOINT)
+  --datasets-api <url>      ERA dataset explorer API, for the publication date and id of each graph
+                            (default: the one of the endpoint, or ROUTEBOOK_DATASETS_API; "none" skips it)
   --limit <n>               Max items to print (route, default all)
   --kinds <a,b>             Only print these item kinds (route)
   --area                    Use OP areas instead of OP centre points as endpoints
@@ -76,6 +80,7 @@ async function main() {
       data: { type: "string" },
       snapshot: { type: "string" },
       endpoint: { type: "string" },
+      "datasets-api": { type: "string" },
       limit: { type: "string" },
       kinds: { type: "string" },
       area: { type: "boolean", default: false },
@@ -93,6 +98,8 @@ async function main() {
   const dataRoot = resolve(values.data ?? process.env.ROUTEBOOK_DATA_DIR ?? join(ROOT, "data"));
   const webRoot = join(dataRoot, "web");
   const endpoint = values.endpoint ?? process.env.ROUTEBOOK_SPARQL_ENDPOINT;
+  const datasetsApi = (values["datasets-api"] ?? process.env.ROUTEBOOK_DATASETS_API)?.trim();
+  const provenance = datasetsApi?.toLowerCase() === "none" ? false : datasetsApi ? { datasetsApi } : true;
   const folder = (code: string) => code.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
   let dir = values.snapshot ? resolve(values.snapshot) : join(dataRoot, "snapshots", folder(id));
   let webDir = join(webRoot, folder(id));
@@ -109,7 +116,7 @@ async function main() {
 
   if (cmd === "index") {
     const list = await writeDatasetIndex(webRoot);
-    console.error(`${join(webRoot, "datasets.json")}: ${list.map((d) => d.id).join(", ") || "no datasets"}`);
+    console.error(`${join(webRoot, "datasets.json")}: ${list.map((d) => `${d.id}${d.status === "loaded" ? "" : ` (${d.status})`}`).join(", ") || "no datasets"}`);
     return;
   }
 
@@ -120,19 +127,33 @@ async function main() {
     const client = new SparqlClient({ graph: graphs[0]!, graphs, ...(endpoint ? { endpoint } : {}) });
     console.error(`Fetching ${dataset.name} (${graphs.join(", ")}) from ${client.endpoint}`);
     const t0 = Date.now();
-    const snapshot = await fetchSnapshot({
-      client,
-      country: dataset.code,
-      name: dataset.name,
-      ...(dataset.imName ? { imName: dataset.imName } : {}),
-      onProgress: (step, rows) => console.error(`  ${step.padEnd(16)} ${rows} rows`),
-    });
-    await saveSnapshot(snapshotDir, snapshot);
-    await saveWebBundle(out, snapshot, webExtras(snapshot));
-    await writeDatasetIndex(webRoot);
-    const seconds = (Date.now() - t0) / 1000;
-    console.error(`Saved to ${snapshotDir} and ${out} in ${seconds.toFixed(0)} s`);
-    return { snapshot, seconds };
+    try {
+      const snapshot = await fetchSnapshot({
+        client,
+        country: dataset.code,
+        name: dataset.name,
+        ...(dataset.imName ? { imName: dataset.imName } : {}),
+        onProgress: (step, rows) => console.error(`  ${step.padEnd(16)} ${rows} rows`),
+        provenance,
+        onWarning: (message) => console.error(`  warning: ${message}`),
+      });
+      await saveSnapshot(snapshotDir, snapshot);
+      await saveWebBundle(out, snapshot, webExtras(snapshot));
+      await writeDatasetIndex(webRoot, { checkedAt: new Date().toISOString(), endpoint: client.endpoint });
+      const seconds = (Date.now() - t0) / 1000;
+      const published = snapshot.meta.provenance?.map((g) => g.publishedAt?.slice(0, 10)).filter(Boolean);
+      console.error(`Saved to ${snapshotDir} and ${out} in ${seconds.toFixed(0)} s${published?.length ? ` (ERA publication ${[...new Set(published)].join(", ")})` : ""}`);
+      return { snapshot, seconds };
+    } catch (e) {
+      // the previous bundle, if any, stays; the catalogue records the failure
+      const error = e instanceof Error ? e.message : String(e);
+      await writeDatasetIndex(webRoot, {
+        failures: [{ id: folder(dataset.code), name: dataset.name, ...(dataset.imName ? { imName: dataset.imName } : {}), error, graphs }],
+        checkedAt: new Date().toISOString(),
+        endpoint: client.endpoint,
+      }).catch(() => undefined);
+      throw e;
+    }
   };
 
   if (cmd === "fetch") {
@@ -152,7 +173,8 @@ async function main() {
     const ids = (list?: string) => new Set((list ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean));
     const only = ids(values.only);
     const skip = ids(values.skip);
-    const datasets = allDatasets(await discoverGraphs(lookup)).filter((d) => (!only.size || only.has(d.code)) && !skip.has(d.code));
+    const all = allDatasets(await discoverGraphs(lookup));
+    const datasets = all.filter((d) => (!only.size || only.has(d.code)) && !skip.has(d.code));
     if (!datasets.length) throw new Error(`No RINF datasets to fetch on ${lookup.endpoint}${only.size ? ` (--only ${[...only].join(",")})` : ""}`);
     console.error(`${datasets.length} datasets: ${datasets.map((d) => d.code).join(", ")}`);
     const results: Array<{ dataset: CountryGraph; ops?: number; seconds?: number; error?: string }> = [];
@@ -174,6 +196,10 @@ async function main() {
       }
     }
     const ok = results.filter((r) => !r.error);
+    // datasets that were fetched earlier but are no longer on the endpoint
+    const onEndpoint = new Set(all.map((d) => folder(d.code)));
+    const removed = only.size || skip.size ? [] : (await readCatalogue(webRoot)).datasets.map((d) => d.id).filter((i) => !onEndpoint.has(i));
+    await writeDatasetIndex(webRoot, { checkedAt: new Date().toISOString(), endpoint: lookup.endpoint, removed });
     const lines = [
       `| Dataset | Graphs | Operational points | Time |`,
       `| --- | --- | ---: | ---: |`,

@@ -6,6 +6,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Dataset provenance, modelled on RINF Atlas: `routebook fetch` records what ERA published for each named graph (infrastructure manager, dataset id, file name, publication date, triple count, fingerprint) from the dataset explorer API and the repository (`meta.provenance`, `ROUTEBOOK_DATASETS_API` / `--datasets-api`). `datasets.json` becomes a catalogue with a status per dataset (loaded, failed with the error while the previous data stays on offer, removed from ERA) and when the endpoint was last checked; `routebook index` rebuilds it. The web app shows a **Datasets** button (network, ERA publication date, loaded/listed count) that opens a dialog listing every dataset with its publication, fetch time, status and a link into RINF Atlas (`atlasUrl`), and prints the publication behind every routebook in the footer.
+- A configured imagery background (for example Esri World Imagery through `ESRI_API_KEY`) takes the place of the coarse built-in Satellite layer; `builtinBasemaps: ["map", "satellite"]` keeps it.
+
 - Any RINF country or infrastructure manager, not only Norway:
   - `routebook datasets` lists the named graphs on the endpoint with their countries.
   - `routebook fetch --dataset <id>` takes an ISO 3166-1 alpha-3 country code (its graphs are looked up on the endpoint), an IM code such as `0076` or a graph IRI; `--graph` (repeatable), `--name` and `--im` combine graphs into one dataset. `--country` still works.

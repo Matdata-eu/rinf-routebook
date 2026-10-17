@@ -1,4 +1,5 @@
 import { SparqlClient, type Row } from "./sparql.js";
+import { graphProvenance, type EraOptions } from "./era.js";
 import type {
   Direction,
   FeatureKind,
@@ -75,10 +76,16 @@ export interface FetchSnapshotOptions {
   name?: string;
   imName?: string;
   onProgress?: (step: string, rows: number) => void;
+  /**
+   * Ask ERA what it published for the graphs (dataset explorer + graph sizes) and
+   * record it in meta.provenance. Default true; false skips the extra requests.
+   */
+  provenance?: boolean | EraOptions;
+  onWarning?: (message: string) => void;
 }
 
 /** Fetch everything the routebook needs for one country graph. */
-export async function fetchSnapshot({ client, country, name, imName, onProgress }: FetchSnapshotOptions): Promise<Snapshot> {
+export async function fetchSnapshot({ client, country, name, imName, onProgress, provenance = true, onWarning }: FetchSnapshotOptions): Promise<Snapshot> {
   const run = async (name: string): Promise<Row[]> => {
     const rows = await client.selectNamed(name);
     onProgress?.(name, rows.length);
@@ -101,7 +108,7 @@ export async function fetchSnapshot({ client, country, name, imName, onProgress 
     tunnelAreas: await run("tunnel-areas"),
     geometry: await run("netelement-geometry"),
   };
-  return assembleSnapshot(r, {
+  const snapshot = assembleSnapshot(r, {
     endpoint: client.endpoint,
     graph: client.graphs[0] ?? client.graph,
     ...(client.graphs.length > 1 ? { graphs: client.graphs } : {}),
@@ -109,6 +116,16 @@ export async function fetchSnapshot({ client, country, name, imName, onProgress 
     ...(name ? { name } : {}),
     ...(imName ? { imName } : {}),
   });
+  if (provenance) {
+    const opts = { ...(typeof provenance === "object" ? provenance : {}), ...(onWarning ? { onWarning } : {}) };
+    snapshot.meta.provenance = await graphProvenance(client.endpoint, client.graphs, opts);
+    snapshot.meta.checkedAt = new Date().toISOString();
+    onProgress?.("provenance", snapshot.meta.provenance.length);
+    // the IMs' names as ERA lists them, when the dataset was not given one
+    const ims = snapshot.meta.provenance.map((g) => g.imName).filter((n): n is string => !!n);
+    if (!snapshot.meta.imName && ims.length) snapshot.meta.imName = [...new Set(ims)].join(", ");
+  }
+  return snapshot;
 }
 
 export type RawResults = Record<

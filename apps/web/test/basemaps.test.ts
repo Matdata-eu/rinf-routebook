@@ -15,20 +15,24 @@ describe("basemaps", () => {
   it("adds configured layers after the built-ins, and can hide the built-ins", () => {
     const ortho = { id: "ortho", label: "Orthophoto", tiles: ["https://x.test/{z}/{x}/{y}.jpg"], maxzoom: 21, attribution: "© Ortho" };
     const list = basemaps({ basemaps: [ortho] }, BASE);
-    expect(list.map((b) => b.id)).toEqual(["map", "satellite", "ortho"]);
-    expect(list[2]).toMatchObject({ label: "Orthophoto", aerial: true, source: { tiles: ["https://x.test/{z}/{x}/{y}.jpg"], maxzoom: 21, attribution: "© Ortho" } });
+    // configured imagery takes the Satellite slot: the coarse built-in layer is dropped
+    expect(list.map((b) => b.id)).toEqual(["map", "ortho"]);
+    expect(list[1]).toMatchObject({ label: "Orthophoto", aerial: true, source: { tiles: ["https://x.test/{z}/{x}/{y}.jpg"], maxzoom: 21, attribution: "© Ortho" } });
     expect(basemaps({ basemaps: [ortho], builtinBasemaps: false }).map((b) => b.id)).toEqual(["ortho"]);
     expect(basemaps({ basemaps: [ortho], builtinBasemaps: ["map"] }).map((b) => b.id)).toEqual(["map", "ortho"]);
+    // ... unless it is asked for by id; a configured plain map keeps it
+    expect(basemaps({ basemaps: [ortho], builtinBasemaps: ["map", "satellite"] }).map((b) => b.id)).toEqual(["map", "satellite", "ortho"]);
+    expect(basemaps({ basemaps: [{ ...ortho, id: "plan", imagery: false }] }).map((b) => b.id)).toEqual(["map", "satellite", "plan"]);
     // a configured id replaces the built-in one
-    expect(basemaps({ basemaps: [{ ...ortho, id: "map" }] }).map((b) => b.label)).toEqual(["Satellite", "Orthophoto"]);
+    expect(basemaps({ basemaps: [{ ...ortho, id: "map", imagery: false }] }).map((b) => b.label)).toEqual(["Satellite", "Orthophoto"]);
     // never an empty switch
     expect(basemaps({ builtinBasemaps: false }).map((b) => b.id)).toEqual(["map"]);
   });
 
   it("skips layers without tiles and resolves relative (proxied) templates", () => {
     const list = basemaps({ basemaps: [{ id: "bad", tiles: [] }, { id: "aerial", tiles: ["tiles/aerial/{z}/{x}/{y}"], tileSize: 512, scheme: "tms" }] }, BASE);
-    expect(list.map((b) => b.id)).toEqual(["map", "satellite", "aerial"]);
-    expect(list[2]!.source).toMatchObject({ tiles: ["https://rail.example/routebook/tiles/aerial/{z}/{x}/{y}"], tileSize: 512, scheme: "tms" });
+    expect(list.map((b) => b.id)).toEqual(["map", "aerial"]);
+    expect(list[1]!.source).toMatchObject({ tiles: ["https://rail.example/routebook/tiles/aerial/{z}/{x}/{y}"], tileSize: 512, scheme: "tms" });
     expect(absoluteTemplate("/t/{z}/{x}/{y}", BASE)).toBe("https://rail.example/t/{z}/{x}/{y}");
     expect(absoluteTemplate("//cdn.test/{z}", BASE)).toBe("https://cdn.test/{z}");
   });

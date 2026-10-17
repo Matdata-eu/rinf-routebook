@@ -115,6 +115,8 @@ describe("datasets", () => {
     await mkdir(join(root, "junk"));
     const list = await writeDatasetIndex(root);
     expect(list.map((d) => [d.id, d.name])).toEqual([["0088", "0088"], ["nor", "Norway"]]);
-    expect(JSON.parse(await readFile(join(root, "datasets.json"), "utf8"))[1]).toEqual({ id: "nor", name: "Norway", imName: "Bane NOR", fetchedAt: "2026-10-13T00:00:00Z", ops: 734 });
+    const file = JSON.parse(await readFile(join(root, "datasets.json"), "utf8"));
+    expect(file.version).toBe(2);
+    expect(file.datasets[1]).toEqual({ id: "nor", name: "Norway", imName: "Bane NOR", fetchedAt: "2026-10-13T00:00:00Z", ops: 734, status: "loaded", counts: { ops: 734 } });
   });
 });

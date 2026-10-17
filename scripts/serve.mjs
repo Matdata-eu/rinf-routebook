@@ -29,9 +29,24 @@ const TYPES = {
 const COMPRESS = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".map", ".wasm"]);
 const SECURITY = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin" };
 
-/** datasets.json from the bundles found in the given folders (first folder wins per id). */
+/**
+ * datasets.json: the catalogue the CLI wrote (`routebook fetch` / `index`: status, what ERA
+ * published, when the endpoint was last checked) in the first folder that has one, plus any
+ * bundle found in the folders that it does not list (first folder wins per id).
+ */
 export function listDatasets(dirs) {
   const byId = new Map();
+  let catalogue = {};
+  for (const dir of dirs) {
+    try {
+      const raw = JSON.parse(readFileSync(join(dir, "datasets.json"), "utf8"));
+      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.datasets) ? raw.datasets : [];
+      if (!Array.isArray(raw) && raw && typeof raw === "object" && !catalogue.checkedAt) catalogue = { ...(raw.checkedAt ? { checkedAt: raw.checkedAt } : {}), ...(raw.endpoint ? { endpoint: raw.endpoint } : {}) };
+      for (const d of list) if (d && typeof d.id === "string" && !byId.has(d.id)) byId.set(d.id, { ...d, name: d.name || d.id, status: d.status ?? "loaded" });
+    } catch {
+      /* no catalogue here */
+    }
+  }
   for (const dir of dirs) {
     let entries = [];
     try {
@@ -43,19 +58,32 @@ export function listDatasets(dirs) {
       if (!d.isDirectory() || byId.has(d.name)) continue;
       try {
         const meta = JSON.parse(readFileSync(join(dir, d.name, "meta.json"), "utf8"));
+        const publishedAt = (meta.provenance ?? []).map((g) => g.publishedAt).filter(Boolean).sort().at(-1);
         byId.set(d.name, {
           id: d.name,
           name: meta.name ?? meta.country ?? d.name,
           ...(meta.imName ? { imName: meta.imName } : {}),
           fetchedAt: meta.fetchedAt,
           ops: meta.counts?.ops ?? 0,
+          status: "loaded",
+          ...(meta.checkedAt ? { checkedAt: meta.checkedAt } : {}),
+          ...(publishedAt ? { publishedAt } : {}),
+          ...(meta.provenance ? { graphs: meta.provenance } : {}),
+          ...(meta.counts ? { counts: meta.counts } : {}),
+          ...(meta.endpoint ? { endpoint: meta.endpoint } : {}),
         });
       } catch {
         /* not a bundle */
       }
     }
   }
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const datasets = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return { version: 2, ...catalogue, datasets };
+}
+
+/** The dataset entries alone (the bundles the app can load). */
+export function datasetEntries(dirs) {
+  return listDatasets(dirs).datasets;
 }
 
 function json(res, body, status = 200) {

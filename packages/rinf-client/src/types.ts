@@ -129,6 +129,30 @@ export interface SnapshotMeta {
   imName?: string;
   fetchedAt: string;
   counts: Record<string, number>;
+  /** What ERA published for each named graph of the dataset (see era.ts), when it could be read. */
+  provenance?: GraphProvenance[];
+  /** When ERA was last asked about the dataset (the explorer and the graph sizes). */
+  checkedAt?: string;
+  /** ERA ontology version the data was published with, when the ontology graph says so. */
+  ontologyVersion?: string;
+}
+
+/** One named graph of a dataset as ERA publishes it: the IM's upload behind the data. */
+export interface GraphProvenance {
+  graph: string;
+  /** IM organisation code: the last part of the graph IRI. */
+  imCode: string;
+  imName?: string;
+  /** Country code as the dataset explorer reports it. */
+  country?: string;
+  /** ERA dataset id and file name of the upload. */
+  datasetId?: string;
+  fileName?: string;
+  /** ISO 8601 publication date. */
+  publishedAt?: string;
+  triples?: number;
+  /** `dataset id | publication date | triple count`, changes when ERA publishes new data. */
+  fingerprint?: string;
 }
 
 export interface Snapshot {

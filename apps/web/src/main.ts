@@ -12,12 +12,14 @@ import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
 import { DriveView } from "./drive-view.js";
 import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
-import { loadDatasets, pickDataset, rinfAttribution, examplesFor } from "./datasets.js";
+import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, rinfAttribution, examplesFor } from "./datasets.js";
+import { openDatasetsDialog } from "./datasets-dialog.js";
 
 const params = new URLSearchParams(location.search);
 const BASE = import.meta.env.BASE_URL;
 // runtime configuration (config.json, written by the server from its settings) and the datasets on offer
-const [CONFIG, DATASETS] = await Promise.all([loadRuntimeConfig(`${BASE}config.json`), loadDatasets(`${BASE}datasets.json`)]);
+const [CONFIG, CATALOGUE] = await Promise.all([loadRuntimeConfig(`${BASE}config.json`), loadCatalogue(`${BASE}datasets.json`)]);
+const DATASETS = loadable(CATALOGUE.datasets);
 const DATASET = pickDataset(DATASETS, params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -681,14 +683,39 @@ function buildDatasetPicker(): void {
     select.append(o);
   }
   select.closest<HTMLElement>(".field")!.hidden = false;
-  select.addEventListener("change", () => {
-    const url = new URL(location.href);
-    for (const k of ["from", "to", "at", "play", "country"]) url.searchParams.delete(k);
-    url.searchParams.set("dataset", select.value);
-    location.assign(url);
-  });
+  select.addEventListener("change", () => openDataset(select.value));
 }
 buildDatasetPicker();
+
+/** Switch the app to another dataset (a reload: the whole bundle changes). */
+function openDataset(id: string): void {
+  const url = new URL(location.href);
+  for (const k of ["from", "to", "at", "play", "country"]) url.searchParams.delete(k);
+  url.searchParams.set("dataset", id);
+  location.assign(url);
+}
+
+/** The Datasets button: which RINF publication the shown network comes from, and how many datasets are on offer. */
+function buildDatasetsButton(): void {
+  const btn = $<HTMLButtonElement>("datasets-btn");
+  const current = CATALOGUE.datasets.find((d) => d.id === DATASET);
+  const summary = datasetsSummary(CATALOGUE.datasets);
+  if (!current && !summary.label) return;
+  btn.replaceChildren();
+  if (current) {
+    btn.append(Object.assign(document.createElement("b"), { textContent: current.name }));
+    btn.append(` RINF ${current.publishedAt ? fmtDate(current.publishedAt) : current.fetchedAt ? `fetched ${fmtDate(current.fetchedAt)}` : ""}`.trimEnd());
+  } else btn.append("Datasets");
+  if (summary.label && CATALOGUE.datasets.length > 1) {
+    const badge = document.createElement("span");
+    badge.className = `badge${summary.problems ? " warn" : ""}`;
+    badge.textContent = summary.label;
+    btn.append(" ", badge);
+  }
+  btn.hidden = false;
+  btn.addEventListener("click", () => openDatasetsDialog(CATALOGUE, { current: DATASET, atlasUrl: CONFIG.atlasUrl, onOpen: openDataset }));
+}
+buildDatasetsButton();
 
 /** Show the whole network when the app opens without a route. */
 function fitNetwork(snapshot: Snapshot): void {
@@ -711,7 +738,14 @@ Promise.all([snapshotPromise, stylePromise])
     searchIndex = buildSearchIndex(snapshot.ops);
     addLayers(snapshot);
     drive.setNetwork(snapshot.geometry ?? {});
-    $("meta").textContent = `RINF snapshot ${snapshot.meta.name ?? snapshot.meta.country}, fetched ${snapshot.meta.fetchedAt.slice(0, 10)}`;
+    const listed = CATALOGUE.datasets.find((d) => d.id === DATASET);
+    $("meta").textContent = provenanceText({
+      name: snapshot.meta.name ?? snapshot.meta.country,
+      ...(snapshot.meta.provenance ? { graphs: snapshot.meta.provenance } : {}),
+      ...(listed?.publishedAt ? { publishedAt: listed.publishedAt } : {}),
+      fetchedAt: snapshot.meta.fetchedAt,
+      ...(listed?.status ? { status: listed.status } : {}),
+    });
     $("rinf-credit").textContent = rinfAttribution(snapshot.meta, { html: false });
     const find = (code: string | null) => (code ? snapshot.ops.find((o) => o.uopid.toLowerCase() === code.toLowerCase()) : undefined);
     const from = find(params.get("from"));
