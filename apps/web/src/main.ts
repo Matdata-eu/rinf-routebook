@@ -14,6 +14,7 @@ import { DriveView } from "./drive-view.js";
 import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
 import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, rinfAttribution, examplesFor } from "./datasets.js";
 import { openDatasetsDialog } from "./datasets-dialog.js";
+import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
 
 const params = new URLSearchParams(location.search);
 const BASE = import.meta.env.BASE_URL;
@@ -663,6 +664,8 @@ if (CONFIG.title) {
   document.title = CONFIG.title;
   $("brand").textContent = CONFIG.title;
 }
+const DISCLAIMER = resolveDisclaimer(CONFIG.disclaimer);
+if (DISCLAIMER) installDisclaimer(DISCLAIMER);
 if (CONFIG.privacy?.url) {
   const box = $("privacy");
   const link = box.querySelector("a")!;

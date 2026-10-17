@@ -154,7 +154,20 @@ Other top-level fields:
 | `glyphs` | Font URL template for the station labels (MapLibre `glyphs`); the default is the MapLibre demo server. Self-host it for production or offline use. |
 | `privacy` | Privacy statement, see [Privacy statement](#privacy-statement). |
 | `examples` | Example routes on the start panel per dataset: `{"bel": [{"from": "BEBRU", "to": "BEANT", "label": "Brussels → Antwerp"}]}`. |
+| `disclaimer` | Demo disclaimer, see [Disclaimer](#disclaimer): `{ "publisher": "..." }`, custom wording, or `false`. |
 | `atlasUrl` | RINF Atlas instance the Datasets dialog links to (default `https://rinf-atlas.matdata.eu`); `false` for no links. |
+
+## Disclaimer
+
+The app ships with a demo disclaimer: a hazard-striped banner at the top ("Demo environment: not for operational use ..."), a notice the user acknowledges once per wording, and a stamp on every printed routebook. It says that the RINF data is shown as ERA publishes it, without warranty, and that the publisher of the site is not responsible for it. Name yourself as the publisher, or change the wording, in `config/config.json`:
+
+```json
+{ "disclaimer": { "publisher": "Matdata" } }
+{ "disclaimer": { "banner": "Test instance of Example Rail", "title": "Internal test", "text": ["First paragraph.", "Second paragraph."], "print": "TEST INSTANCE" } }
+{ "disclaimer": false }
+```
+
+Switching it off makes the disclaimer yours to give. Changing the wording asks every user to acknowledge the notice again.
 
 ## Privacy statement
 
