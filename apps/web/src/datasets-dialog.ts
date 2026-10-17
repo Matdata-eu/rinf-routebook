@@ -4,7 +4,7 @@
  * when it was fetched and whether the last update worked. Modelled on the
  * Datasets dialog of RINF Atlas, which links from here.
  */
-import { atlasLink, fmtDate, imNames, loadable, type DatasetCatalogue, type DatasetInfo } from "./datasets.js";
+import { atlasLink, fmtDate, imNames, latestOf, loadable, type DatasetCatalogue, type DatasetInfo } from "./datasets.js";
 
 export interface DatasetsDialogOptions {
   /** The dataset shown in the app. */
@@ -15,7 +15,7 @@ export interface DatasetsDialogOptions {
   onOpen: (id: string) => void;
 }
 
-const STATUS: Record<NonNullable<DatasetInfo["status"]>, string> = { loaded: "Up to date", failed: "Update failed", removed: "Removed from ERA" };
+const STATUS: Record<NonNullable<DatasetInfo["status"]>, string> = { loaded: "Up to date", stale: "Newer data published", pending: "Fetching", failed: "Update failed", removed: "Removed from ERA" };
 
 type SortKey = "name" | "im" | "publishedAt" | "fetchedAt" | "status" | "ops";
 
@@ -46,7 +46,7 @@ function sorted(list: DatasetInfo[]): DatasetInfo[] {
       case "im": return imNames(d).toLowerCase();
       case "publishedAt": return d.publishedAt ?? "";
       case "fetchedAt": return d.fetchedAt ?? "";
-      case "status": return ["failed", "removed", "loaded"].indexOf(statusOf(d));
+      case "status": return ["failed", "pending", "stale", "removed", "loaded"].indexOf(statusOf(d));
       case "ops": return d.ops ?? 0;
       default: return d.name.toLowerCase();
     }
@@ -90,7 +90,12 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
     const ids = [...new Set(graphs.map((g) => g.datasetId).filter((x): x is string => !!x))];
     const files = [...new Set(graphs.map((g) => g.fileName).filter((x): x is string => !!x))];
     const pub = h("td", {}, h("span", { text: fmtDate(d.publishedAt) }), ids.length ? h("small", { text: `dataset ${ids.join(", ")}`, title: files.join(", ") }) : undefined);
-    const detail = status === "failed" ? d.error : status === "removed" ? "The data that was fetched earlier is still on offer." : undefined;
+    const detail =
+      status === "failed" ? d.error
+      : status === "removed" ? "The data that was fetched earlier is still on offer."
+      : status === "stale" ? `ERA published this dataset on ${fmtDate(latestOf(d.latest))}; the next update fetches it. Until then the data of ${fmtDate(d.publishedAt)} is shown.`
+      : status === "pending" ? "ERA publishes this dataset; it is being fetched for the first time."
+      : undefined;
     const canOpen = loadable([d]).length > 0;
     const atlas = atlasLink(opts.atlasUrl, graphs);
     const actions = h(

@@ -13,7 +13,7 @@ export interface GraphInfo {
   fingerprint?: string;
 }
 
-export type DatasetStatus = "loaded" | "failed" | "removed";
+export type DatasetStatus = "loaded" | "stale" | "pending" | "failed" | "removed";
 
 /** One entry of datasets.json (written by `routebook fetch` / `routebook index`, or listed by the server). */
 export interface DatasetInfo {
@@ -23,8 +23,13 @@ export interface DatasetInfo {
   /** When the data on offer was fetched; absent when no fetch ever succeeded. */
   fetchedAt?: string;
   ops?: number;
-  /** loaded (default), failed (last fetch failed, `error`; older data may still be there) or removed (no longer on ERA). */
+  /**
+   * loaded (default), stale (ERA published newer data, `latest`; the sync fetches it), pending (on ERA,
+   * not fetched yet), failed (last fetch failed, `error`; older data may still be there) or removed (no longer on ERA).
+   */
   status?: DatasetStatus;
+  /** What ERA publishes now, when it is not what was fetched (stale, pending). */
+  latest?: GraphInfo[];
   error?: string;
   /** When ERA was last asked about this dataset. */
   checkedAt?: string;
@@ -76,7 +81,7 @@ export async function loadDatasets(url: string, fetchImpl: typeof fetch = fetch)
 
 /** Datasets the app can open: those with data (a failed fetch keeps its previous data on offer). */
 export function loadable(list: DatasetInfo[]): DatasetInfo[] {
-  return list.filter((d) => d.fetchedAt || !d.status || d.status === "loaded");
+  return list.filter((d) => d.fetchedAt || !d.status || d.status === "loaded" || d.status === "stale");
 }
 
 /** "6 Oct 2026" for an ISO date, or "–". */
@@ -87,13 +92,25 @@ export function fmtDate(iso: string | undefined, time = false): string {
   return d.toLocaleString(undefined, time ? { dateStyle: "medium", timeStyle: "short" } : { dateStyle: "medium" });
 }
 
-/** "27/28 datasets" (loaded of listed, removed ones left out) for the Datasets button; "" when there is nothing to say. */
-export function datasetsSummary(list: DatasetInfo[]): { label: string; problems: number } {
+/**
+ * "27/28 datasets" (with data, of those listed; removed ones left out) for the Datasets button,
+ * with the number of problems (failed) and of updates on their way (stale, pending); "" when there is nothing to say.
+ */
+export function datasetsSummary(list: DatasetInfo[]): { label: string; problems: number; updating: number } {
   const listed = list.filter((d) => d.status !== "removed");
-  if (!listed.length) return { label: "", problems: 0 };
+  if (!listed.length) return { label: "", problems: 0, updating: 0 };
   const problems = listed.filter((d) => d.status === "failed").length;
+  const updating = listed.filter((d) => d.status === "stale" || d.status === "pending").length;
   const n = listed.length;
-  return { label: n === 1 ? (problems ? "1 dataset, failed" : "1 dataset") : `${n - problems}/${n} datasets`, problems };
+  const withData = loadable(listed).length;
+  const one = listed[0]!;
+  const label = n === 1 ? (one.status === "failed" ? "1 dataset, failed" : one.status === "pending" ? "1 dataset, fetching" : one.status === "stale" ? "1 dataset, updating" : "1 dataset") : `${withData}/${n} datasets`;
+  return { label, problems, updating };
+}
+
+/** The latest publication date among graphs, or undefined. */
+export function latestOf(graphs: GraphInfo[] | undefined): string | undefined {
+  return graphs?.map((g) => g.publishedAt).filter((d): d is string => !!d).sort().at(-1);
 }
 
 /** The IMs of a dataset as ERA names them, else the configured name, else the IM codes. */
@@ -108,7 +125,7 @@ export function imNames(d: Pick<DatasetInfo, "imName" | "graphs">): string {
  * One line saying which RINF publication the data comes from, for the footer and the printed
  * routebook (the data credit next to it names ERA and the infrastructure manager).
  */
-export function provenanceText(d: Pick<DatasetInfo, "name" | "graphs" | "publishedAt" | "fetchedAt" | "status">): string {
+export function provenanceText(d: Pick<DatasetInfo, "name" | "graphs" | "publishedAt" | "fetchedAt" | "status" | "latest">): string {
   const ids = [...new Set((d.graphs ?? []).map((g) => g.datasetId).filter((x): x is string => !!x))];
   const parts = [
     `${d.name}: RINF dataset${ids.length ? ` ${ids.join(", ")}` : ""}`,
@@ -116,6 +133,8 @@ export function provenanceText(d: Pick<DatasetInfo, "name" | "graphs" | "publish
     d.fetchedAt ? `fetched ${fmtDate(d.fetchedAt)}` : "not fetched yet",
   ];
   if (d.status === "failed") parts.push("the last update failed");
+  if (d.status === "stale") parts.push(`newer data published by ERA${d.latest ? ` on ${fmtDate(latestOf(d.latest))}` : ""}, update on its way`);
+  if (d.status === "pending") parts.push("the first fetch is on its way");
   if (d.status === "removed") parts.push("no longer published by ERA");
   return parts.join(", ");
 }

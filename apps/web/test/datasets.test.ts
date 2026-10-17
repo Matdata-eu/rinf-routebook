@@ -47,11 +47,14 @@ describe("datasets", () => {
       { id: "deu", name: "Germany", status: "failed" as const, error: "timeout" },
       { id: "bel", name: "Belgium", fetchedAt: "t", status: "failed" as const, error: "later failure" },
       { id: "xxx", name: "Gone", fetchedAt: "t", status: "removed" as const },
+      { id: "swe", name: "Sweden", fetchedAt: "t", status: "stale" as const },
+      { id: "fra", name: "France", status: "pending" as const },
     ];
-    expect(loadable(all).map((d) => d.id)).toEqual(["nor", "bel", "xxx"]);
-    expect(datasetsSummary(all)).toEqual({ label: "1/3 datasets", problems: 2 });
-    expect(datasetsSummary([all[0]!])).toEqual({ label: "1 dataset", problems: 0 });
-    expect(datasetsSummary([])).toEqual({ label: "", problems: 0 });
+    expect(loadable(all).map((d) => d.id)).toEqual(["nor", "bel", "xxx", "swe"]);
+    expect(datasetsSummary(all)).toEqual({ label: "3/5 datasets", problems: 2, updating: 2 });
+    expect(datasetsSummary([all[0]!])).toEqual({ label: "1 dataset", problems: 0, updating: 0 });
+    expect(datasetsSummary([all[5]!])).toEqual({ label: "1 dataset, fetching", problems: 0, updating: 1 });
+    expect(datasetsSummary([])).toEqual({ label: "", problems: 0, updating: 0 });
   });
 
   it("says where the data comes from, for the footer and the print", () => {
@@ -63,6 +66,7 @@ describe("datasets", () => {
     });
     expect(text).toMatch(/^Norway: RINF dataset d-76, published by ERA on .*2026, fetched .*2026$/);
     expect(provenanceText({ name: "Belgium", status: "failed" })).toBe("Belgium: RINF dataset, ERA publication date unknown, not fetched yet, the last update failed");
+    expect(provenanceText({ name: "Sweden", status: "stale", fetchedAt: "2026-10-13T12:00:00Z", publishedAt: "2026-10-01T00:00:00Z", latest: [{ graph: "g", imCode: "0074", publishedAt: "2026-10-15T00:00:00Z" }] })).toMatch(/newer data published by ERA on .*2026, update on its way$/);
   });
 
   it("links a dataset's graphs to RINF Atlas", () => {
