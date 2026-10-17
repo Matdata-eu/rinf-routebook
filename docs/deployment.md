@@ -22,14 +22,14 @@ mkdir -p config && cp config.example.json config/config.json   # optional: your 
 docker compose up -d
 ```
 
-Open <http://localhost:8080>. On the first start the container fetches the datasets in `ROUTEBOOK_DATASETS` (Norway by default) from the public ERA SPARQL endpoint into the `routebook-data` volume. That takes a minute or two per country; the logs show the progress (`docker compose logs -f`). Later starts reuse the data.
+Open <http://localhost:8080>. The container fetches the datasets in `ROUTEBOOK_DATASETS` (Norway by default) from the public ERA SPARQL endpoint into the `routebook-data` volume while the server starts: the app lists them as *Fetching* until they are there, a minute or two per country (`docker compose logs -f` shows the progress). Later starts reuse the data.
 
 The image is published as `ghcr.io/matdata-eu/rinf-routebook` (tags: `latest` and `x.y.z` for releases, `edge` for the main branch). `docker compose build` builds it from the source instead.
 
-Update the data, for example monthly:
+The data keeps itself current: every `ROUTEBOOK_SYNC_MINUTES` (60) the server's sync compares what ERA publishes with what it has and fetches only the datasets that changed, are new or failed last time; see [datasets.md](datasets.md). The Datasets dialog in the app and `GET /healthz` show the state. `ROUTEBOOK_SYNC_MINUTES=0` switches the sync off; the container then fetches the missing datasets once before the server starts, and you update by hand:
 
 ```bash
-docker compose run --rm routebook routebook fetch --dataset NOR
+docker compose run --rm routebook routebook fetch --dataset NOR     # or: routebook sync --once
 ```
 
 or set `ROUTEBOOK_REFRESH=1` for one restart. The server picks up new data without a restart; browsers load it on their next visit.
@@ -44,7 +44,7 @@ docker run -d --name routebook -p 8080:8080 \
   ghcr.io/matdata-eu/rinf-routebook:latest
 ```
 
-The container runs as the unprivileged `node` user (uid 1000): a host folder mounted on `/data` instead of a volume must be writable for it (`chown 1000 <folder>`). `/data` holds the RINF data, `/config/config.json` the optional configuration. `GET /healthz` answers `{"ok":true}` for health checks.
+The container runs as the unprivileged `node` user (uid 1000): a host folder mounted on `/data` instead of a volume must be writable for it (`chown 1000 <folder>`). `/data` holds the RINF data, `/config/config.json` the optional configuration. `GET /healthz` answers `{"ok":true, ...}` for health checks, with the state of the datasets and of the sync (see [datasets.md](datasets.md#serving-the-bundles)).
 
 ## Choosing the RINF data
 
@@ -198,8 +198,9 @@ Environment variables of the server and the container:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ROUTEBOOK_DATASETS` | `NOR` in Compose, none in the image | Datasets to fetch on start when they are not there yet (comma or space separated). |
-| `ROUTEBOOK_REFRESH` | `0` | `1` fetches them again on start. |
+| `ROUTEBOOK_DATASETS` | `NOR` in Compose, none in the image | Datasets to fetch and keep current (comma or space separated ids, or `all`). Without it, the sync keeps the datasets that are already there. |
+| `ROUTEBOOK_SYNC_MINUTES` | `60` in the image, `0` otherwise | How often `routebook sync` compares the data with ERA and fetches what changed; `0` switches it off (the container then fetches the missing datasets once on start). |
+| `ROUTEBOOK_REFRESH` | `0` | `1` fetches every dataset again on start. |
 | `ROUTEBOOK_DEFAULT_DATASET` | first dataset | Same as `defaultDataset`. |
 | `ROUTEBOOK_TITLE` | `Routebook` | Same as `title`. |
 | `ROUTEBOOK_DEFAULT_BASEMAP` | first background | Same as `defaultBasemap`. |
@@ -225,6 +226,8 @@ pnpm routebook fetch --dataset NOR      # once; writes data/snapshots/nor and da
 PORT=8080 node scripts/serve.mjs apps/web/dist
 ```
 
+Add `ROUTEBOOK_SYNC_MINUTES=60` (and `ROUTEBOOK_DATASETS`) to have the server keep the data current the way the container does, or run `pnpm routebook sync --once` from a cron job.
+
 The server reads `config.json` from the working directory (or `ROUTEBOOK_CONFIG_FILE`). `pnpm dev:web` uses the same `config.json` at the repository root, so you can try map layers while developing.
 
 The built app (`apps/web/dist`) can also be put on any static host: see [GitHub Pages (static)](#github-pages-static).
@@ -239,7 +242,7 @@ location /routebook/ {
 }
 ```
 
-Responses for hashed assets carry long cache headers, the rest `no-cache`. The data bundles are a few MB per country; enable gzip in the proxy or let the Routebook server compress them (it does when the client asks).
+Responses for hashed assets carry long cache headers, the rest `no-cache` with an `ETag`, so browsers revalidate and only download a bundle again after a new fetch. The data bundles are a few MB per country and are served precompressed (brotli or gzip, whichever the browser accepts), so the proxy need not compress them again; pass the `Accept-Encoding` header through.
 
 ## GitHub Pages (static)
 

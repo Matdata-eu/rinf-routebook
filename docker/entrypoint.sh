@@ -1,6 +1,9 @@
 #!/bin/sh
 # Routebook container entry point.
-#   serve (default)          fetch the datasets in ROUTEBOOK_DATASETS that are not in /data yet, then serve
+#   serve (default)          serve the app; the server runs "routebook sync" next to itself, which fetches
+#                            the datasets in ROUTEBOOK_DATASETS and keeps them current (ROUTEBOOK_SYNC_MINUTES,
+#                            default 60). With ROUTEBOOK_SYNC_MINUTES=0 the datasets that are not in /data
+#                            yet are fetched once, before the server starts.
 #   routebook <args>         run the CLI, e.g. "routebook fetch --dataset BEL" or "routebook datasets"
 #   anything else            run that command
 set -e
@@ -11,6 +14,17 @@ case "${1:-serve}" in
   routebook) shift; exec node apps/cli/dist/index.js "$@" ;;
   *) exec "$@" ;;
 esac
+
+if [ "${ROUTEBOOK_SYNC_MINUTES:-60}" != "0" ]; then
+  if [ -z "$(ls -A "$ROUTEBOOK_DATA_DIR/web" 2>/dev/null)" ]; then
+    echo "No RINF data in $ROUTEBOOK_DATA_DIR yet: the sync fetches ${ROUTEBOOK_DATASETS:-nothing (set ROUTEBOOK_DATASETS, e.g. NOR)} while the server starts; the app lists the datasets as pending until then."
+  fi
+  if [ "${ROUTEBOOK_REFRESH:-0}" = "1" ]; then
+    echo "ROUTEBOOK_REFRESH=1: fetching ${ROUTEBOOK_DATASETS:-the datasets in the catalogue} again before the server starts..."
+    node apps/cli/dist/index.js sync --once --force || echo "Could not fetch the RINF data; starting with the data that is there." >&2
+  fi
+  exec node scripts/serve.mjs apps/web/dist
+fi
 
 # ROUTEBOOK_DATASETS: space or comma separated, e.g. "NOR" or "NOR,0088", or "all" for every RINF
 # dataset on the endpoint. ROUTEBOOK_REFRESH=1 fetches them again.

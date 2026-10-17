@@ -5,10 +5,12 @@
 //
 // Usage: node scripts/serve.mjs [dir=apps/web/dist] [port=4173]
 // Environment: PORT, HOST (default 127.0.0.1; 0.0.0.0 in Docker), ROUTEBOOK_DATA_DIR (default ./data),
+// ROUTEBOOK_SYNC_MINUTES (> 0 runs `routebook sync` next to the server, keeping the data current),
 // and the configuration variables in scripts/runtime-config.mjs.
 import { createServer } from "node:http";
-import { createReadStream, readFileSync, readdirSync, statSync } from "node:fs";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { spawn } from "node:child_process";
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { createGzip } from "node:zlib";
 import { fileURLToPath } from "node:url";
@@ -82,6 +84,23 @@ export function listDatasets(dirs) {
 }
 
 /** The dataset entries alone (the bundles the app can load). */
+/** What `GET /healthz` answers: the catalogue's state, for monitoring; `ok` is whether the server runs. */
+export function health(dirs, sync) {
+  const { checkedAt, datasets } = listDatasets(dirs);
+  const count = (status) => datasets.filter((d) => (d.status ?? "loaded") === status).length;
+  return {
+    ok: true,
+    ...(checkedAt ? { checkedAt } : {}),
+    datasets: datasets.length,
+    loaded: datasets.filter((d) => d.fetchedAt && d.status !== "removed").length,
+    failed: count("failed"),
+    stale: count("stale"),
+    pending: count("pending"),
+    removed: count("removed"),
+    ...(sync ? { sync: sync.state() } : {}),
+  };
+}
+
 export function datasetEntries(dirs) {
   return listDatasets(dirs).datasets;
 }
@@ -152,6 +171,76 @@ export function startServer(dir, port = 4173, host = "127.0.0.1", opts = {}) {
   return new Promise((ok) => server.listen(port, host, () => ok(server)));
 }
 
+/**
+ * Run `routebook sync` as a child process for as long as the server runs: it keeps the data in
+ * the data folder current (see docs/datasets.md). Restarted a minute after it exits, stopped with
+ * the server. `minutes` <= 0 runs nothing.
+ * @param {{ minutes?: number, cli?: string, log?: (message: string) => void, env?: NodeJS.ProcessEnv }} [opts]
+ */
+export function startSync({ minutes = 0, cli = defaultCli(), log = console.error, env = process.env } = {}) {
+  const state = { running: false, restarts: 0 };
+  if (!(minutes > 0)) return { state: () => ({ enabled: false }), stop() {} };
+  if (!cli || !existsSync(cli)) {
+    log(`Sync: the CLI was not found at ${cli ?? "(unset)"}; set ROUTEBOOK_SYNC_CLI or build apps/cli. The data is not kept current.`);
+    return { state: () => ({ enabled: true, running: false, error: "CLI not found" }), stop() {} };
+  }
+  let child;
+  let stopped = false;
+  let timer;
+  const start = () => {
+    if (stopped) return;
+    child = spawn(process.execPath, [...process.execArgv, cli, "sync", "--minutes", String(minutes)], { stdio: "inherit", env });
+    state.running = true;
+    state.startedAt = new Date().toISOString();
+    delete state.exitCode;
+    child.on("exit", (code, signal) => {
+      state.running = false;
+      state.exitCode = code ?? signal;
+      state.exitedAt = new Date().toISOString();
+      if (stopped) return;
+      state.restarts++;
+      log(`Sync exited (${code ?? signal}); starting it again in 60 s`);
+      timer = setTimeout(start, 60_000);
+      timer.unref?.();
+    });
+  };
+  start();
+  const stop = () => {
+    stopped = true;
+    clearTimeout(timer);
+    child?.kill("SIGTERM");
+  };
+  return { state: () => ({ enabled: true, minutes, ...state }), stop };
+}
+
+/** apps/cli/dist/index.js next to this script's repository, as laid out in the image and the checkout. */
+function defaultCli() {
+  if (process.env.ROUTEBOOK_SYNC_CLI) return resolve(process.env.ROUTEBOOK_SYNC_CLI);
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "apps", "cli", "dist", "index.js");
+}
+
+/** A weak validator from the file's size and modification time, enough for If-None-Match. */
+function etagOf(stat) {
+  return `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+}
+
+/**
+ * `<file>.br` or `<file>.gz` written by `routebook fetch` (saveWebBundle), when the client accepts
+ * it and it is not older than the file itself (a bundle written without them leaves stale ones behind).
+ */
+function precompressed(path, stat, acceptEncoding) {
+  for (const [ext, encoding] of [[".br", "br"], [".gz", "gzip"]]) {
+    if (!new RegExp(`\\b${encoding}\\b`).test(acceptEncoding)) continue;
+    try {
+      const cs = statSync(`${path}${ext}`);
+      if (cs.isFile() && cs.mtimeMs >= stat.mtimeMs) return { path: `${path}${ext}`, encoding };
+    } catch {
+      /* not there */
+    }
+  }
+  return undefined;
+}
+
 /** The request handler, also used as middleware by the Vite dev server (`next` for anything it doesn't serve). */
 export function createHandler(dir, opts = {}) {
   const root = resolve(dir);
@@ -160,6 +249,7 @@ export function createHandler(dir, opts = {}) {
   const config = opts.config ?? loadConfig();
   const browserConfig = publicConfig(config);
   const proxied = proxiedLayers(config);
+  const sync = opts.sync;
 
   return (req, res, next) => {
     const url = new URL(req.url ?? "/", "http://x");
@@ -169,7 +259,7 @@ export function createHandler(dir, opts = {}) {
       res.writeHead(405, SECURITY).end();
       return;
     }
-    if (p.endsWith("/healthz")) return json(res, { ok: true });
+    if (p.endsWith("/healthz")) return json(res, health(roots, sync));
     if (p.endsWith("/config.json")) return json(res, browserConfig);
     if (p.endsWith("/datasets.json")) return json(res, listDatasets(roots));
     if (p.endsWith("/privacy.html") && config.privacy?.html) {
@@ -191,10 +281,25 @@ export function createHandler(dir, opts = {}) {
       return;
     }
     const ext = extname(path);
+    const stat = statSync(path);
+    const etag = etagOf(stat);
     // Vite puts a content hash in asset names: those can be cached for good
     const immutable = /[\\/]assets[\\/]/.test(path) && path.startsWith(root);
-    const headers = { "Content-Type": TYPES[ext] ?? "application/octet-stream", "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache", ...SECURITY };
-    if (COMPRESS.has(ext) && /\bgzip\b/.test(req.headers["accept-encoding"] ?? "")) {
+    const headers = { "Content-Type": TYPES[ext] ?? "application/octet-stream", "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache", ETag: etag, ...SECURITY };
+    const acceptEncoding = req.headers["accept-encoding"] ?? "";
+    const ready = COMPRESS.has(ext) ? precompressed(path, stat, acceptEncoding) : undefined;
+    if (ready) headers.Vary = "Accept-Encoding";
+    const ifNoneMatch = req.headers["if-none-match"];
+    if (ifNoneMatch && ifNoneMatch.split(",").some((t) => t.trim() === etag)) {
+      res.writeHead(304, headers).end();
+      return;
+    }
+    if (ready) {
+      // the bundle was precompressed when it was written: send it as it is
+      res.writeHead(200, { ...headers, "Content-Encoding": ready.encoding, "Content-Length": statSync(ready.path).size });
+      if (req.method === "HEAD") return void res.end();
+      createReadStream(ready.path).pipe(res);
+    } else if (COMPRESS.has(ext) && /\bgzip\b/.test(acceptEncoding)) {
       res.writeHead(200, { ...headers, "Content-Encoding": "gzip", Vary: "Accept-Encoding" });
       if (req.method === "HEAD") return void res.end();
       createReadStream(path).pipe(createGzip()).pipe(res);
@@ -210,6 +315,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const dir = process.argv[2] ?? "apps/web/dist";
   const port = Number(process.argv[3] ?? process.env.PORT ?? 4173);
   const host = process.env.HOST ?? "127.0.0.1";
-  await startServer(dir, port, host);
-  console.log(`Routebook: http://${host === "0.0.0.0" ? "localhost" : host}:${port}/  (serving ${resolve(dir)}, Ctrl+C to stop)`);
+  const minutes = Number(process.env.ROUTEBOOK_SYNC_MINUTES ?? 0);
+  const sync = startSync({ minutes });
+  const server = await startServer(dir, port, host, { sync });
+  console.log(`Routebook: http://${host === "0.0.0.0" ? "localhost" : host}:${port}/  (serving ${resolve(dir)}${minutes > 0 ? `, syncing the RINF data every ${minutes} min` : ""}, Ctrl+C to stop)`);
+  const shutdown = () => {
+    sync.stop();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }

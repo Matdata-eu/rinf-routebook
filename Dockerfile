@@ -31,6 +31,8 @@ ENV NODE_ENV=production \
     PORT=8080 \
     ROUTEBOOK_DATA_DIR=/data \
     ROUTEBOOK_CONFIG_FILE=/config/config.json \
+    # keep the RINF data current: check ERA every hour (0 = fetch once on start, never again)
+    ROUTEBOOK_SYNC_MINUTES=60 \
     # use HTTP(S)_PROXY / NO_PROXY for the SPARQL endpoint and the tile proxy, when set
     NODE_USE_ENV_PROXY=1
 WORKDIR /app

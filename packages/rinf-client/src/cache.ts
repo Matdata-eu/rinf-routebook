@@ -1,7 +1,8 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { constants as zlib, brotliCompressSync, gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { WEB_PARTS, toWebBundle } from "./compact.js";
-import { imCodeOf, latestPublication } from "./era.js";
+import { fingerprintsDiffer, imCodeOf, latestPublication } from "./era.js";
 import type { GraphProvenance, Snapshot, SnapshotMeta } from "./types.js";
 
 /**
@@ -25,16 +26,84 @@ export async function loadSnapshot(dir: string): Promise<Snapshot> {
   return Object.fromEntries(entries) as Record<Part, unknown> as Snapshot;
 }
 
+/** The folder name and `?dataset=` id of a dataset code (`NOR` -> `nor`). */
+export function datasetFolder(code: string): string {
+  return code.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+}
+
+export interface SaveBundleOptions {
+  /**
+   * Write `.gz` and `.br` next to every part, so the server can send them as they are
+   * (default true). Brotli at its highest quality is slow, so this is done once here, not per request.
+   */
+  compress?: boolean;
+  /**
+   * Write into `<dir>.tmp` and swap it into place when complete (default true), so a server
+   * reading `dir` never sees a half-written bundle; the previous bundle is kept until then.
+   */
+  atomic?: boolean;
+}
+
+/** gzip and brotli versions of a bundle part, for the server to send precompressed. */
+export function compressPart(json: string): { gz: Buffer; br: Buffer } {
+  const buf = Buffer.from(json, "utf8");
+  return {
+    gz: gzipSync(buf, { level: 9 }),
+    br: brotliCompressSync(buf, {
+      params: { [zlib.BROTLI_PARAM_MODE]: zlib.BROTLI_MODE_TEXT, [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_SIZE_HINT]: buf.length },
+    }),
+  };
+}
+
 /**
  * Write the compact browser bundle (see compact.ts) as one JSON file per part.
  * `extras` are written as additional parts (`<name>.json`) with the same IRI compaction.
  */
-export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Record<string, unknown> = {}): Promise<void> {
-  await mkdir(dir, { recursive: true });
+export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Record<string, unknown> = {}, opts: SaveBundleOptions = {}): Promise<void> {
+  const { compress = true, atomic = true } = opts;
+  const target = atomic ? `${dir}.tmp` : dir;
+  if (atomic) await rm(target, { recursive: true, force: true });
+  await mkdir(target, { recursive: true });
   const parts = toWebBundle(snapshot, { extras });
   for (const part of [...WEB_PARTS, ...Object.keys(extras)]) {
-    await writeFile(join(dir, `${part}.json`), JSON.stringify(parts[part]));
+    const json = JSON.stringify(parts[part]);
+    const file = join(target, `${part}.json`);
+    await writeFile(file, json);
+    if (compress) {
+      const { gz, br } = compressPart(json);
+      // written after the plain file, so their mtime is never older than it (the server checks that)
+      await writeFile(`${file}.gz`, gz);
+      await writeFile(`${file}.br`, br);
+    } else {
+      await rm(`${file}.gz`, { force: true });
+      await rm(`${file}.br`, { force: true });
+    }
   }
+  if (atomic) await swapDirectory(target, dir);
+}
+
+/**
+ * Replace the directory `dir` with `tmp`: the old one is moved aside and removed once the new
+ * one is in place. A reader is without the folder only between the two renames (microseconds);
+ * files it already opened stay readable. A leftover `<dir>.old` from an interrupted swap is removed first.
+ */
+export async function swapDirectory(tmp: string, dir: string): Promise<void> {
+  const old = `${dir}.old`;
+  await rm(old, { recursive: true, force: true });
+  let hadOld = false;
+  try {
+    await rename(dir, old);
+    hadOld = true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  try {
+    await rename(tmp, dir);
+  } catch (e) {
+    if (hadOld) await rename(old, dir).catch(() => undefined);
+    throw e;
+  }
+  if (hadOld) await rm(old, { recursive: true, force: true });
 }
 
 /** One entry of datasets.json: a web bundle the app can load, or a dataset whose last fetch failed. */
@@ -48,10 +117,14 @@ export interface DatasetEntry {
   ops: number;
   /**
    * loaded: the bundle is there and its last fetch succeeded;
+   * stale: the bundle is there, but ERA has published newer data since (`latest`), to be fetched by the next sync;
+   * pending: ERA publishes the dataset and no fetch has succeeded yet (the sync is on it);
    * failed: the last fetch failed (`error`; the previous bundle, if any, is still served);
    * removed: ERA no longer publishes the dataset, the bundle stays.
    */
   status: DatasetStatus;
+  /** What ERA publishes now, per graph, when it differs from the fetched data (stale) or nothing was fetched (pending). */
+  latest?: GraphProvenance[];
   error?: string;
   /** When the dataset was last fetched or checked against ERA. */
   checkedAt?: string;
@@ -63,7 +136,8 @@ export interface DatasetEntry {
   ontologyVersion?: string;
 }
 
-export type DatasetStatus = "loaded" | "failed" | "removed";
+export type DatasetStatus = "loaded" | "stale" | "pending" | "failed" | "removed";
+const STATUSES = new Set<string>(["loaded", "stale", "pending", "failed", "removed"]);
 
 /** datasets.json: the datasets on offer and when the endpoint was last checked. */
 export interface DatasetCatalogue {
@@ -108,7 +182,7 @@ export function parseCatalogue(json: unknown): DatasetCatalogue {
     Array.isArray(list)
       ? list
           .filter((d): d is Record<string, unknown> => !!d && typeof d === "object" && typeof (d as { id?: unknown }).id === "string")
-          .map((d) => ({ ...(d as unknown as DatasetEntry), name: String(d.name || d.id), ops: Number(d.ops ?? 0) || 0, status: d.status === "failed" || d.status === "removed" ? d.status : "loaded" }))
+          .map((d) => ({ ...(d as unknown as DatasetEntry), name: String(d.name || d.id), ops: Number(d.ops ?? 0) || 0, status: typeof d.status === "string" && STATUSES.has(d.status) ? (d.status as DatasetStatus) : "loaded" }))
       : [];
   if (Array.isArray(json)) return { version: 2, datasets: entries(json) };
   if (json && typeof json === "object") {
@@ -132,11 +206,27 @@ export async function readCatalogue(root: string): Promise<DatasetCatalogue> {
   }
 }
 
+/** A dataset ERA publishes that has no bundle yet (a sync will fetch it). */
+export interface PendingDataset {
+  id: string;
+  name?: string;
+  imName?: string;
+  graphs?: string[];
+}
+
 export interface IndexOptions {
   /** Fetches that failed in this run; recorded on the dataset (its previous bundle stays listed). */
   failures?: DatasetFailure[];
   /** Datasets ERA no longer publishes (ids); marked removed, bundles kept. */
   removed?: string[];
+  /** Datasets on ERA without a bundle yet (pending). */
+  pending?: PendingDataset[];
+  /**
+   * What ERA publishes now, by dataset id, from the last check. A dataset whose bundle does not
+   * carry the same fingerprints is marked stale (`latest`); one that does is up to date again.
+   * Datasets not named keep what the previous catalogue knew.
+   */
+  available?: Record<string, GraphProvenance[]>;
   /** When the endpoint was compared with the data (default: kept from the previous catalogue). */
   checkedAt?: string;
   endpoint?: string;
@@ -172,14 +262,38 @@ export async function writeDatasetIndex(root: string, opts: IndexOptions = {}): 
       checkedAt: at,
     });
   }
+  for (const p of opts.pending ?? []) {
+    const id = p.id.toLowerCase();
+    if (byId.has(id)) continue;
+    const graphs = p.graphs?.map((graph) => ({ graph, imCode: imCodeOf(graph) }));
+    byId.set(id, { id, name: p.name ?? p.id, ...(p.imName ? { imName: p.imName } : {}), ops: 0, status: "pending", ...(graphs ? { graphs } : {}), checkedAt: opts.checkedAt ?? new Date().toISOString() });
+  }
   for (const p of previous.datasets) {
     const had = byId.get(p.id);
     if (!had) {
-      // a failure recorded earlier, still without a bundle
-      if (p.status === "failed") byId.set(p.id, p);
+      // a failure or a pending dataset recorded earlier, still without a bundle
+      if (p.status === "failed" || p.status === "pending") byId.set(p.id, p);
     } else if (p.status === "failed" && p.error && !failedNow.has(p.id) && had.fetchedAt === p.fetchedAt && had.status === "loaded") {
       // the bundle was not refetched since it failed: the failure still stands
       byId.set(p.id, { ...had, status: "failed", error: p.error, checkedAt: p.checkedAt ?? had.checkedAt });
+    } else if (p.status === "removed" && had.fetchedAt === p.fetchedAt && had.status === "loaded") {
+      // still the bundle from before ERA dropped the dataset
+      byId.set(p.id, { ...had, status: "removed", checkedAt: p.checkedAt ?? had.checkedAt });
+    }
+  }
+  // what ERA publishes now, against what the bundles carry
+  for (const entry of byId.values()) {
+    const previousEntry = previous.datasets.find((p) => p.id === entry.id);
+    const latest = opts.available?.[entry.id] ?? previousEntry?.latest;
+    // nothing known about what ERA publishes (explorer and repository unreachable): nothing to compare
+    if (!latest?.some((g) => g.fingerprint)) continue;
+    const { latest: _drop, ...rest } = entry;
+    if (entry.status === "pending" || !entry.fetchedAt) {
+      byId.set(entry.id, { ...entry, latest, publishedAt: latestPublication(latest) ?? entry.publishedAt });
+    } else if (fingerprintsDiffer(entry.graphs, latest)) {
+      byId.set(entry.id, { ...rest, ...(entry.status === "loaded" ? { status: "stale" } : {}), latest });
+    } else {
+      byId.set(entry.id, rest as DatasetEntry);
     }
   }
   for (const id of opts.removed ?? []) {

@@ -20,6 +20,7 @@ It works for any network the [ERA knowledge graph](https://graph.data.era.europa
 - **Drive** view: a satnav-style camera follows a train along the route, with the next signal, speed change or station ahead.
 - **Any RINF country**: fetch one or more datasets, switch between them in the app.
 - **Know your dataset**: the app names the ERA publication (infrastructure manager, dataset id, publication date, fetch time) behind every network and every printed routebook, lists all datasets with their status in a [**Datasets** dialog](docs/screenshots/datasets-dialog.png), and links each one to [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas).
+- **Always current**: the server checks ERA every hour and fetches only the datasets that changed, with the previous data on offer until the new one is in place; see [docs/datasets.md](docs/datasets.md).
 - **Your own map layers**: add orthophotos, satellite imagery or WMS overlays with API keys that stay on the server.
 - **Your own privacy statement**, linked in the footer.
 - **Docker image** and Docker Compose file; a CLI to fetch data and print routebooks in the terminal.
@@ -34,7 +35,7 @@ cd rinf-routebook
 docker compose up -d        # http://localhost:8080
 ```
 
-The first start downloads the Norwegian RINF data (about a minute). Choose other countries with `ROUTEBOOK_DATASETS` in `.env` (see [.env.example](.env.example)), and add your own map layers in `config/config.json`. Everything is explained in **[docs/deployment.md](docs/deployment.md)**.
+The container downloads the Norwegian RINF data while it starts (about a minute) and keeps it current. Choose other countries with `ROUTEBOOK_DATASETS` in `.env` (see [.env.example](.env.example)), and add your own map layers in `config/config.json`. Everything is explained in **[docs/deployment.md](docs/deployment.md)**.
 
 ## Development
 
@@ -113,10 +114,10 @@ Status: **early preview** (see the [changelog](CHANGELOG.md)).
 | `packages/schematic` | Switch classification and schematic layout (heuristic and HiGHS solver) |
 | `packages/core-extensions` | Plugin interface (item providers, overlays, cost models) |
 | `apps/web` | Vite + MapLibre web app |
-| `apps/cli` | `routebook datasets / fetch / bundle / index / route / stats` |
+| `apps/cli` | `routebook datasets / fetch / sync / bundle / index / route / stats` |
 | `scripts/` | Server (`serve.mjs`, runtime configuration and tile proxy), demo, screenshots |
 | `docker/`, `Dockerfile`, `docker-compose.yml` | Container image and Compose setup |
-| `docs/` | Deployment, architecture, data coverage, demo script, reusable SPARQL queries |
+| `docs/` | Deployment, datasets and sync, architecture, data coverage, demo script, reusable SPARQL queries |
 
 ## Roadmap
 

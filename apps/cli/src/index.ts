@@ -17,8 +17,11 @@ import {
   saveWebBundle,
   writeDatasetIndex,
   readCatalogue,
+  datasetFolder,
+  runSync,
   type CountryGraph,
   type Snapshot,
+  type SyncItem,
 } from "@routebook/rinf-client";
 import { RoutingGraph, lengthCostModel, opEndpoint, resolveOp, trackPreferenceCostModel } from "@routebook/routing";
 import { RoutebookIndex, buildRoutebook, formatRoutebook } from "@routebook/routebook";
@@ -35,6 +38,10 @@ Commands:
                             including the switch classification for the schematic view
   index                     Rewrite <data>/web/datasets.json (the datasets the web app offers, with
                             what ERA published for each of them and the outcome of the last fetch)
+  sync                      Keep the data current: compare what ERA publishes with the catalogue and
+                            fetch only the datasets that are new, changed or failed last time, then
+                            sleep and check again (--once for a single pass). The server runs this
+                            next to itself when ROUTEBOOK_SYNC_MINUTES is set
   route <from> <to>         Route between two OPs (name, uopid or IRI) and print the routebook
   stats                     Topology statistics of the snapshot
 
@@ -45,8 +52,14 @@ Options:
   --graph <code|IRI>        Fetch exactly these named graphs (repeatable); --dataset is then the id
   --name <text>             Display name of the dataset (fetch)
   --im <text>               Infrastructure manager(s), shown in the data attribution (fetch)
-  --only <a,b>              Only these dataset ids (fetch-all)
-  --skip <a,b>              Leave these dataset ids out (fetch-all)
+  --only <a,b>              Only these dataset ids (fetch-all, sync)
+  --skip <a,b>              Leave these dataset ids out (fetch-all, sync)
+  --datasets <list|all>     Datasets to keep current (sync): dataset ids separated by commas, or "all"
+                            for every dataset on the endpoint (default ROUTEBOOK_DATASETS, else the
+                            datasets already in the catalogue)
+  --minutes <n>             Minutes between two checks (sync; default ROUTEBOOK_SYNC_MINUTES or 60)
+  --once                    One check and the fetches it calls for, then exit (sync)
+  --force                   Fetch every dataset, changed or not (sync)
   --data <dir>              Data folder (default ./data, or ROUTEBOOK_DATA_DIR)
   --snapshot <dir>          Snapshot directory (default <data>/snapshots/<dataset>)
   --endpoint <url>          SPARQL endpoint (default ${DEFAULT_ENDPOINT}, or ROUTEBOOK_SPARQL_ENDPOINT)
@@ -77,6 +90,10 @@ async function main() {
       im: { type: "string" },
       only: { type: "string" },
       skip: { type: "string" },
+      datasets: { type: "string" },
+      minutes: { type: "string" },
+      once: { type: "boolean", default: false },
+      force: { type: "boolean", default: false },
       data: { type: "string" },
       snapshot: { type: "string" },
       endpoint: { type: "string" },
@@ -100,7 +117,7 @@ async function main() {
   const endpoint = values.endpoint ?? process.env.ROUTEBOOK_SPARQL_ENDPOINT;
   const datasetsApi = (values["datasets-api"] ?? process.env.ROUTEBOOK_DATASETS_API)?.trim();
   const provenance = datasetsApi?.toLowerCase() === "none" ? false : datasetsApi ? { datasetsApi } : true;
-  const folder = (code: string) => code.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  const folder = datasetFolder;
   let dir = values.snapshot ? resolve(values.snapshot) : join(dataRoot, "snapshots", folder(id));
   let webDir = join(webRoot, folder(id));
 
@@ -213,6 +230,83 @@ async function main() {
     }
     if (!ok.length) process.exit(1);
     return;
+  }
+
+  if (cmd === "sync") {
+    const lookup = new SparqlClient({ graph: "", ...(endpoint ? { endpoint } : {}) });
+    const minutes = Number(values.minutes ?? process.env.ROUTEBOOK_SYNC_MINUTES ?? 60);
+    if (!Number.isFinite(minutes) || minutes < 0) throw new Error(`--minutes must be a number of minutes, not "${values.minutes ?? process.env.ROUTEBOOK_SYNC_MINUTES}"`);
+    const ids = (list?: string) => new Set((list ?? "").split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean));
+    const only = ids(values.only);
+    const skip = ids(values.skip);
+    const wanted = (values.datasets ?? process.env.ROUTEBOOK_DATASETS ?? "").trim();
+    const log = (m: string) => console.error(`[sync] ${m}`);
+    let stopping = false;
+    const stop = (signal: string) => {
+      if (stopping) process.exit(130);
+      stopping = true;
+      log(`${signal}: stopping after the current fetch, if one is running (again to stop now)`);
+    };
+    process.on("SIGTERM", () => stop("SIGTERM"));
+    process.on("SIGINT", () => stop("SIGINT"));
+
+    /** The datasets to keep current, resolved on the endpoint on every pass (ERA adds and removes graphs). */
+    const selection = async (): Promise<{ datasets: CountryGraph[]; all: boolean }> => {
+      if (wanted.toLowerCase() === "all") {
+        const all = allDatasets(await discoverGraphs(lookup));
+        return { datasets: all.filter((d) => (!only.size || only.has(d.code)) && !skip.has(d.code)), all: !only.size && !skip.size };
+      }
+      const codes = wanted ? [...ids(wanted)] : (await readCatalogue(webRoot)).datasets.filter((d) => d.status !== "removed").map((d) => d.id.toUpperCase());
+      const datasets: CountryGraph[] = [];
+      for (const code of codes) {
+        if ((only.size && !only.has(code)) || skip.has(code)) continue;
+        datasets.push(await resolveDataset(code, lookup));
+      }
+      return { datasets, all: false };
+    };
+    const fetchOne = async (item: SyncItem) => {
+      const { snapshot } = await fetchDataset(item.dataset);
+      return { ops: snapshot.meta.counts.ops };
+    };
+    log(`Keeping ${wanted || "the datasets in the catalogue"} current from ${lookup.endpoint}${values.once ? " (one pass)" : `, checking every ${minutes} min`}`);
+    for (;;) {
+      let exit = 0;
+      try {
+        const { datasets, all } = await selection();
+        if (!datasets.length) log(wanted ? `No RINF datasets match "${wanted}" on ${lookup.endpoint}` : `Nothing to keep current yet: set ROUTEBOOK_DATASETS or run "routebook fetch"`);
+        const result = await runSync({
+          endpoint: lookup.endpoint,
+          ...(typeof provenance === "object" ? provenance : {}),
+          datasets,
+          all,
+          force: values.force,
+          webRoot,
+          fetchDataset: fetchOne,
+          stopped: () => stopping,
+          log,
+        });
+        if (result.failed.length) exit = 1;
+      } catch (e) {
+        // the endpoint could not be reached at all: the catalogue keeps its last state
+        log(`Check failed: ${e instanceof Error ? e.message : String(e)}`);
+        exit = 2;
+      }
+      if (values.once || minutes === 0) process.exit(exit);
+      if (stopping) process.exit(0);
+      log(`Next check in ${minutes} min`);
+      await new Promise<void>((ok) => {
+        const timer = setTimeout(ok, minutes * 60_000);
+        const poll = setInterval(() => {
+          if (stopping) {
+            clearTimeout(timer);
+            clearInterval(poll);
+            ok();
+          }
+        }, 1000);
+        timer.unref?.();
+      });
+      if (stopping) process.exit(0);
+    }
   }
 
   const snapshot = await loadSnapshot(dir).catch((e: unknown) => {
