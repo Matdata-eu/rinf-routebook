@@ -19,7 +19,7 @@ It works for any network the [ERA knowledge graph](https://graph.data.era.europa
 - **Schematic** track diagram of the route, with the surrounding tracks and switches on the correct side.
 - **Drive** view: a satnav-style camera follows a train along the route, with the next signal, speed change or station ahead.
 - **Any RINF country**: fetch one or more datasets, switch between them in the app.
-- **Know your dataset**: the app names the ERA publication (infrastructure manager, dataset id, publication date, fetch time) behind every network and every printed routebook, lists all datasets with their status in a **Datasets** dialog, and links each one to [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas).
+- **Know your dataset**: the app names the ERA publication (infrastructure manager, dataset id, publication date, fetch time) behind every network and every printed routebook, lists all datasets with their status in a [**Datasets** dialog](docs/screenshots/datasets-dialog.png), and links each one to [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas).
 - **Your own map layers**: add orthophotos, satellite imagery or WMS overlays with API keys that stay on the server.
 - **Your own privacy statement**, linked in the footer.
 - **Docker image** and Docker Compose file; a CLI to fetch data and print routebooks in the terminal.
