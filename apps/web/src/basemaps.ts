@@ -64,6 +64,8 @@ export interface RuntimeConfig {
   privacy?: { label?: string; url: string };
   /** Example routes on the start panel, per dataset id: [{ from: uopid, to: uopid, label? }]. */
   examples?: Record<string, Array<{ from: string; to: string; label?: string }>>;
+  /** RINF Atlas instance the Datasets dialog links to (default: the public one); false for no links. */
+  atlasUrl?: string | false;
 }
 
 /** Plain map: OSM, greyed out so the railway overlay stands out. Fine for a demo, not for heavy production use. */
@@ -137,11 +139,18 @@ export function layerFromConfig(c: LayerConfig, opts: { base: string; overlay?: 
 const valid = (c: LayerConfig | undefined): c is LayerConfig =>
   !!c && typeof c.id === "string" && c.id.trim() !== "" && Array.isArray(c.tiles) && c.tiles.some((t) => typeof t === "string" && t.trim() !== "");
 
-/** The backgrounds on offer: the built-ins that are switched on, then the configured ones (a configured id replaces a built-in). */
+/**
+ * The backgrounds on offer: the built-ins that are switched on, then the configured ones
+ * (a configured id replaces a built-in). A configured imagery background (Esri World Imagery
+ * through ESRI_API_KEY, an orthophoto service, ...) takes the place of the coarse built-in
+ * Satellite layer, which then only stays when `builtinBasemaps` names it.
+ */
 export function basemaps(config: RuntimeConfig, base = "http://localhost/"): Basemap[] {
   const own = (config.basemaps ?? []).filter(valid).map((c) => layerFromConfig(c, { base }));
   const keep = config.builtinBasemaps ?? true;
-  const builtins = BUILTIN_BASEMAPS.filter((b) => (keep === true || (Array.isArray(keep) && keep.includes(b.id))) && !own.some((o) => o.id === b.id));
+  const ownImagery = own.some((o) => o.aerial);
+  const wanted = (b: Basemap) => (keep === true ? !(ownImagery && b.id === "satellite") : Array.isArray(keep) && keep.includes(b.id));
+  const builtins = BUILTIN_BASEMAPS.filter((b) => wanted(b) && !own.some((o) => o.id === b.id));
   const list = [...builtins, ...own];
   return list.length ? list : [osm];
 }

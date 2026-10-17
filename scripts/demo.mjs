@@ -2,14 +2,14 @@
 // Serve the built web app with the RINF data in data/web (run via `pnpm demo`, which builds first).
 // Everything needed for routing is local; only the map background tiles and label fonts need internet.
 import { fileURLToPath } from "node:url";
-import { listDatasets, startServer } from "./serve.mjs";
+import { datasetEntries, startServer } from "./serve.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const dist = `${root}apps/web/dist`;
 const dataDir = process.env.ROUTEBOOK_DATA_DIR ?? `${root}data`;
 const port = Number(process.env.PORT ?? 4173);
 
-const datasets = listDatasets([`${dataDir}/web`, dist]);
+const datasets = datasetEntries([`${dataDir}/web`, dist]).filter((d) => d.fetchedAt);
 if (!datasets.length) {
   console.error('No RINF data yet. Fetch a dataset once (needs internet), e.g. "pnpm fetch:nor" or "pnpm routebook fetch --dataset BEL", then run "pnpm demo" again.');
   process.exit(1);

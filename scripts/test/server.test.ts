@@ -111,7 +111,7 @@ describe("server", () => {
     const cfg = await (await get("/config.json")).text();
     expect(cfg).not.toContain("SECRET");
     expect(JSON.parse(cfg).basemaps[0].tiles).toEqual(["tiles/ortho/{z}/{x}/{y}"]);
-    expect(await (await get("/datasets.json")).json()).toEqual([{ id: "nor", name: "Norway", imName: "Bane NOR", fetchedAt: "t", ops: 1 }]);
+    expect(await (await get("/datasets.json")).json()).toEqual({ version: 2, datasets: [{ id: "nor", name: "Norway", imName: "Bane NOR", fetchedAt: "t", ops: 1, status: "loaded", counts: { ops: 1 } }] });
     expect((await get("/nor/meta.json")).status).toBe(200);
     expect((await get("/")).status).toBe(200);
     expect(JSON.parse(cfg).privacy).toEqual({ label: "Privacy", url: "privacy.html" });
@@ -150,7 +150,7 @@ describe("static build (GitHub Pages)", () => {
     const page = await readFile(join(dist, "privacy.html"), "utf8");
     expect(page).toContain("<!doctype html>");
     expect(page).toContain("hosted on GitHub Pages");
-    expect(JSON.parse(await readFile(join(dist, "datasets.json"), "utf8"))).toEqual([{ id: "bel", name: "Belgium", ops: 7 }]);
+    expect(JSON.parse(await readFile(join(dist, "datasets.json"), "utf8"))).toEqual({ version: 2, datasets: [{ id: "bel", name: "Belgium", ops: 7, status: "loaded", counts: { ops: 7 } }] });
   });
 
   it("ships the Matdata privacy statement for the public demo", () => {

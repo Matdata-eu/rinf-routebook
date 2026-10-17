@@ -69,13 +69,22 @@ Combine graphs into one dataset with your own id, name and data credit:
 docker compose run --rm routebook routebook fetch --dataset benelux --graph 0088 --graph 0084 --name Benelux --im "Infrabel, ProRail"
 ```
 
+### Which dataset the app is working on
+
+Every fetch records what ERA published for each named graph of the dataset: the infrastructure manager, the ERA dataset id and file name, the publication date and the triple count, read from the [RINF dataset explorer](https://rinf.data.era.europa.eu) API and the repository (the same calls [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas) makes). The app shows it:
+
+- the **Datasets** button at the top right names the network shown and its ERA publication date, with a `loaded/listed` count when there are several datasets; it opens a dialog with every dataset, its infrastructure manager, publication date, dataset id, fetch time, status (up to date, update failed with the error, removed from ERA) and a link into RINF Atlas;
+- the footer, printed with every routebook, says which dataset and publication the routebook is based on.
+
+The list is `datasets.json` in the data folder, written by `routebook fetch`, `fetch-all` and `index`. A dataset whose fetch failed keeps its previous bundle on offer and is marked failed until a fetch succeeds; a dataset no longer on the endpoint is marked removed. `ROUTEBOOK_DATASETS_API` (or `--datasets-api`) points at another dataset explorer, `none` skips it; `atlasUrl` in the configuration points the links at your own RINF Atlas, `false` removes them.
+
 Data quality differs a lot per country: Routebook needs the micro topology (`era:LinearElement` and `era:NetRelation`) to route. Norway has been checked in detail, see [data-coverage-norway.md](data-coverage-norway.md); for other countries, run the queries in [`docs/queries`](queries) and tell us what you find in an issue.
 
 ## Map layers
 
 Out of the box the app offers two backgrounds that need no key and allow commercial use: **Streets** (OpenStreetMap, fine for testing, but see the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) for production) and **Satellite** (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0).
 
-Many organisations have sharper imagery of their own, usually behind an API key. Add it in `config/config.json` (see [`config.example.json`](../config.example.json)):
+Many organisations have sharper imagery of their own, usually behind an API key. A configured imagery background takes the place of the built-in Satellite layer (which only stays when `builtinBasemaps` names it), so the map offers one aerial button, the sharp one. Add it in `config/config.json` (see [`config.example.json`](../config.example.json)):
 
 ```json
 {
@@ -145,6 +154,7 @@ Other top-level fields:
 | `glyphs` | Font URL template for the station labels (MapLibre `glyphs`); the default is the MapLibre demo server. Self-host it for production or offline use. |
 | `privacy` | Privacy statement, see [Privacy statement](#privacy-statement). |
 | `examples` | Example routes on the start panel per dataset: `{"bel": [{"from": "BEBRU", "to": "BEANT", "label": "Brussels → Antwerp"}]}`. |
+| `atlasUrl` | RINF Atlas instance the Datasets dialog links to (default `https://rinf-atlas.matdata.eu`); `false` for no links. |
 
 ## Privacy statement
 
@@ -186,6 +196,7 @@ Environment variables of the server and the container:
 | `ROUTEBOOK_CONFIG` | none | The configuration as JSON in one variable; its keys replace those of the file. |
 | `ROUTEBOOK_DATA_DIR` | `/data` in the image, `./data` otherwise | RINF snapshots (`snapshots/<id>`) and web bundles (`web/<id>`). |
 | `ROUTEBOOK_SPARQL_ENDPOINT` | `https://graph.data.era.europa.eu/repositories/rinf-plus` | SPARQL endpoint for `fetch` and `datasets`. |
+| `ROUTEBOOK_DATASETS_API` | the explorer of the endpoint (`https://rinf.data.era.europa.eu/api/v1`) | ERA dataset explorer API, for the publication date and id of each dataset; `none` skips it. |
 | `PORT`, `HOST` | `8080`, `0.0.0.0` in the image | Where the server listens. |
 | `HTTPS_PROXY`, `NO_PROXY` | none | Outgoing proxy for the SPARQL endpoint and the tile proxy (the image sets `NODE_USE_ENV_PROXY=1`). |
 | `ROUTEBOOK_PORT`, `ROUTEBOOK_VERSION` | `8080`, `latest` | Compose only: host port and image tag. |

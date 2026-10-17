@@ -30,10 +30,10 @@ export function buildStatic(dist, { config = loadConfig(), log = console.warn } 
     written.push("privacy.html");
   }
   writeFileSync(resolve(dist, "config.json"), JSON.stringify(publicConfig(staticConfig), null, 2));
-  const datasets = listDatasets([dist]);
-  writeFileSync(resolve(dist, "datasets.json"), JSON.stringify(datasets, null, 2));
+  const catalogue = listDatasets([dist]);
+  writeFileSync(resolve(dist, "datasets.json"), JSON.stringify(catalogue, null, 2));
   written.push("datasets.json");
-  return { written, dropped, datasets };
+  return { written, dropped, datasets: catalogue.datasets };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
