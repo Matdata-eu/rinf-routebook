@@ -7,7 +7,8 @@ import "@fontsource/barlow/700.css";
 import "./styles.css";
 import type { OperationalPoint } from "@routebook/rinf-client";
 import type { IndexOp } from "@routebook/rinf-client/network-index";
-import { RouteEngine, loadBundle, type Bundle, type RouteResult } from "./engine.js";
+import { RouteEngine, loadBundle, mergeBundles, type Bundle, type RouteResult } from "./engine.js";
+import { transitDatasets } from "@routebook/rinf-client/network-index";
 import { bounds, pointAtDistance, type LngLat } from "./geometry.js";
 import { buildSearchIndex, searchOps, type SearchEntry } from "./search.js";
 import { codeOf, findByCode, loadNetwork, networkFromBundle, opsBounds, opsGeoJson, pickFilter, solsGeoJson, visibleOps, type Network } from "./network.js";
@@ -288,9 +289,13 @@ const loading = new Map<string, Promise<{ engine: RouteEngine; bundle: Bundle }>
 const MAX_LOADED = 6;
 let searchIndex: SearchEntry<IndexOp>[] = [];
 const selection: { from?: IndexOp; to?: IndexOp } = {};
-/** The route, with the engine (dataset) that computed it. */
-type Routed = RouteResult & { engine: RouteEngine; dataset: string };
+/** The route, with the engine that computed it and the datasets it runs through (one, or several joined by border links). */
+type Routed = RouteResult & { engine: RouteEngine; datasets: string[] };
 let result: Routed | undefined;
+/** The engine of the last set of datasets routed across, rebuilt when the set changes. */
+let merged: { key: string; engine: RouteEngine; bundle: Bundle } | undefined;
+/** How many datasets one route may run through. */
+const MAX_TRANSIT = 6;
 /** Routes requested while a bundle was loading are superseded by the next one. */
 let computeToken = 0;
 type View = "map" | "schematic" | "drive";
@@ -398,7 +403,7 @@ function loadEngine(id: string): Promise<{ engine: RouteEngine; bundle: Bundle }
         // keep the browser's memory in check: drop the datasets loaded longest ago, never the route's
         for (const [old] of engines) {
           if (engines.size < MAX_LOADED) break;
-          if (old !== result?.dataset) engines.delete(old);
+          if (!result?.datasets.includes(old)) engines.delete(old);
         }
         engines.set(id, loaded);
         return loaded;
@@ -417,19 +422,46 @@ function fullOp(bundle: Bundle, op: IndexOp): OperationalPoint {
   return found;
 }
 
+/**
+ * The engine for a route from `from` to `to`: the dataset's own when both are in one, else one
+ * built over every dataset the route runs through (the chain of border links between the two),
+ * loading the bundles that are not there yet.
+ */
+async function engineFor(from: IndexOp, to: IndexOp, token: number): Promise<{ engine: RouteEngine; datasets: string[]; ops: [OperationalPoint, OperationalPoint] } | undefined> {
+  const chain = transitDatasets(network!.borders.links, from, to);
+  if (!chain) {
+    const hint = network!.borders.links.length ? "no chain of border links joins the two networks" : "this deployment has no border links yet (run routebook link)";
+    throw new Error(`${from.name} is in ${datasetName(from.dataset)} and ${to.name} in ${datasetName(to.dataset)}: ${hint}.`);
+  }
+  if (chain.length > MAX_TRANSIT) throw new Error(`A route from ${from.name} to ${to.name} would run through ${chain.length} networks (${chain.map(datasetName).join(", ")}); up to ${MAX_TRANSIT} are supported.`);
+  const missing = chain.filter((id) => !engines.has(id));
+  if (missing.length) setState("routing", `Loading ${missing.map(datasetName).join(", ")}…`);
+  const parts = await Promise.all(chain.map(async (id) => ({ id, ...(await loadEngine(id)) })));
+  if (token !== computeToken) return undefined;
+  const ops: [OperationalPoint, OperationalPoint] = [fullOp(parts[0]!.bundle, from), fullOp(parts.at(-1)!.bundle, to)];
+  if (chain.length === 1) return { engine: parts[0]!.engine, datasets: chain, ops };
+  const key = chain.join("+");
+  let joined = merged?.key === key ? merged : undefined;
+  if (!joined) {
+    setState("routing", `Joining ${chain.map(datasetName).join(", ")}…`);
+    await new Promise((r) => setTimeout(r, 0)); // let the status paint
+    if (token !== computeToken) return undefined;
+    const { bundle, networks } = mergeBundles(parts.map((p) => ({ id: p.id, bundle: p.bundle, label: datasetName(p.id) })), network!.borders.links);
+    joined = merged = { key, bundle, engine: new RouteEngine(bundle.snapshot, { ...(bundle.switches ? { switches: bundle.switches } : {}), networks }) };
+  }
+  return { engine: joined.engine, datasets: chain, ops };
+}
+
 async function compute(token: number): Promise<void> {
   const { from, to } = selection;
   if (!network || !from || !to) return;
   try {
-    if (from.dataset !== to.dataset) {
-      throw new Error(`${from.name} is in ${datasetName(from.dataset)} and ${to.name} in ${datasetName(to.dataset)}: routes across networks come in the next release, when the border links between the RINF datasets are in place.`);
-    }
-    if (!engines.has(from.dataset)) setState("routing", `Loading ${datasetName(from.dataset)}…`);
-    const { engine, bundle } = await loadEngine(from.dataset);
-    if (token !== computeToken) return;
+    const found = await engineFor(from, to, token);
+    if (!found) return;
+    const { engine, datasets, ops } = found;
     const t0 = performance.now();
-    result = { ...engine.route(fullOp(bundle, from), fullOp(bundle, to)), engine, dataset: from.dataset };
-    drive.setNetwork(bundle.snapshot.geometry ?? {});
+    result = { ...engine.route(ops[0], ops[1]), engine, datasets };
+    drive.setNetwork(engine.snapshot.geometry ?? {});
     const ms = Math.round(performance.now() - t0);
     (map.getSource("route") as GeoJSONSource).setData({
       type: "Feature",
@@ -444,7 +476,7 @@ async function compute(token: number): Promise<void> {
       drive.start(result, { at: 0, play: false, ...driveStart });
       driveStart = undefined;
     }
-    updateProvenance(result.dataset);
+    updateProvenance(result.datasets);
     setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)`);
   } catch (e) {
     if (token !== computeToken) return;
@@ -844,7 +876,7 @@ function openDataset(id: string | undefined): void {
 /** The Datasets button: which RINF publication the shown network comes from, and how many datasets are on offer. */
 function buildDatasetsButton(): void {
   const btn = $<HTMLButtonElement>("datasets-btn");
-  const currentId = FILTER ?? result?.dataset;
+  const currentId = FILTER ?? (result?.datasets.length === 1 ? result.datasets[0] : undefined);
   const current = currentId ? CATALOGUE.datasets.find((d) => d.id === currentId) : undefined;
   const summary = datasetsSummary(CATALOGUE.datasets);
   if (!current && !summary.label) return;
@@ -865,26 +897,36 @@ function buildDatasetsButton(): void {
     btn.append(" ", badge);
   }
   btn.hidden = false;
-  btn.onclick = () => openDatasetsDialog(CATALOGUE, { ...(currentId ? { current: currentId } : {}), atlasUrl: CONFIG.atlasUrl, onOpen: openDataset });
+  btn.onclick = () => openDatasetsDialog(CATALOGUE, { ...(currentId ? { current: currentId } : {}), ...(network ? { borders: network.borders } : {}), atlasUrl: CONFIG.atlasUrl, onOpen: openDataset });
 }
 
 /**
  * The footer and the print: which RINF publication the route (or the chosen dataset) comes from, or,
  * with every network on the map, how many datasets there are and how current they are.
  */
-function updateProvenance(dataset: string | undefined = FILTER): void {
-  const listed = dataset ? CATALOGUE.datasets.find((d) => d.id === dataset) : undefined;
-  const loaded = dataset ? engines.get(dataset)?.bundle.snapshot.meta : undefined;
-  if (dataset && (listed || loaded)) {
-    $("meta").textContent = provenanceText({
-      name: listed?.name ?? loaded?.name ?? loaded?.country ?? datasetName(dataset),
-      ...(listed?.graphs ? { graphs: listed.graphs } : loaded?.provenance ? { graphs: loaded.provenance } : {}),
-      ...(listed?.publishedAt ? { publishedAt: listed.publishedAt } : {}),
-      ...(listed?.fetchedAt ?? loaded?.fetchedAt ? { fetchedAt: (listed?.fetchedAt ?? loaded?.fetchedAt)! } : {}),
-      ...(listed?.status ? { status: listed.status } : {}),
-      ...(listed?.latest ? { latest: listed.latest } : {}),
-    });
-    $("rinf-credit").textContent = rinfAttribution(credit(listed?.imName ?? loaded?.imName), { html: false });
+function updateProvenance(dataset: string | string[] | undefined = FILTER): void {
+  const ids = Array.isArray(dataset) ? dataset : dataset ? [dataset] : [];
+  const lines = ids.map((id) => {
+    const listed = CATALOGUE.datasets.find((d) => d.id === id);
+    const loaded = engines.get(id)?.bundle.snapshot.meta;
+    if (!listed && !loaded) return undefined;
+    return {
+      text: provenanceText({
+        name: listed?.name ?? loaded?.name ?? loaded?.country ?? datasetName(id),
+        ...(listed?.graphs ? { graphs: listed.graphs } : loaded?.provenance ? { graphs: loaded.provenance } : {}),
+        ...(listed?.publishedAt ? { publishedAt: listed.publishedAt } : {}),
+        ...(listed?.fetchedAt ?? loaded?.fetchedAt ? { fetchedAt: (listed?.fetchedAt ?? loaded?.fetchedAt)! } : {}),
+        ...(listed?.status ? { status: listed.status } : {}),
+        ...(listed?.latest ? { latest: listed.latest } : {}),
+      }),
+      imName: listed?.imName ?? loaded?.imName,
+    };
+  }).filter((l): l is { text: string; imName: string | undefined } => !!l);
+  if (lines.length) {
+    // one line per dataset the route runs through, in travel order
+    $("meta").textContent = lines.map((l) => l.text).join(" · ");
+    const ims = [...new Set(lines.map((l) => l.imName).filter((n): n is string => !!n))];
+    $("rinf-credit").textContent = rinfAttribution(credit(ims.length ? ims.join(", ") : undefined), { html: false });
   } else {
     const withData = DATASETS.length;
     const latest = CATALOGUE.datasets.map((d) => d.publishedAt).filter((d): d is string => !!d).sort().at(-1);

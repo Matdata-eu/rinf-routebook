@@ -4,6 +4,7 @@
  * when it was fetched and whether the last update worked. Modelled on the
  * Datasets dialog of RINF Atlas, which links from here.
  */
+import type { NetworkBordersIndex } from "@routebook/rinf-client/network-index";
 import { atlasLink, fmtDate, imNames, latestOf, loadable, type DatasetCatalogue, type DatasetInfo } from "./datasets.js";
 
 export interface DatasetsDialogOptions {
@@ -11,6 +12,8 @@ export interface DatasetsDialogOptions {
   current?: string;
   /** Base URL of a RINF Atlas instance for the "Atlas" links, or false for none. */
   atlasUrl?: string | false;
+  /** The border links between the datasets, for the "Border links" column and the unmatched list. */
+  borders?: NetworkBordersIndex;
   /** Called when the user opens another dataset. */
   onOpen: (id: string | undefined) => void;
 }
@@ -19,7 +22,7 @@ const STATUS: Record<NonNullable<DatasetInfo["status"]>, string> = { loaded: "Up
 /** The signal aspect each status shows (MatData SignalStatus: go, caution, stop). */
 const ASPECT: Record<NonNullable<DatasetInfo["status"]>, "go" | "caution" | "stop"> = { loaded: "go", stale: "caution", pending: "caution", failed: "stop", removed: "caution" };
 
-type SortKey = "name" | "im" | "publishedAt" | "fetchedAt" | "status" | "ops";
+type SortKey = "name" | "im" | "publishedAt" | "fetchedAt" | "status" | "ops" | "borders";
 
 let dialog: HTMLDialogElement | undefined;
 let sortKey: SortKey = "name";
@@ -42,9 +45,10 @@ function statusOf(d: DatasetInfo): NonNullable<DatasetInfo["status"]> {
   return d.status ?? "loaded";
 }
 
-function sorted(list: DatasetInfo[]): DatasetInfo[] {
+function sorted(list: DatasetInfo[], borders?: NetworkBordersIndex): DatasetInfo[] {
   const key = (d: DatasetInfo): string | number => {
     switch (sortKey) {
+      case "borders": return borders?.datasets[d.id]?.links ?? 0;
       case "im": return imNames(d).toLowerCase();
       case "publishedAt": return d.publishedAt ?? "";
       case "fetchedAt": return d.fetchedAt ?? "";
@@ -65,16 +69,16 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
   const body = dialog.querySelector<HTMLElement>(".ds-body")!;
   body.replaceChildren();
   const q = needle.trim().toLowerCase();
-  const rows = sorted(catalogue.datasets).filter((d) => !q || `${d.name} ${d.id} ${imNames(d)} ${d.graphs?.map((g) => `${g.imCode} ${g.country ?? ""} ${g.datasetId ?? ""}`).join(" ") ?? ""}`.toLowerCase().includes(q));
+  const rows = sorted(catalogue.datasets, opts.borders).filter((d) => !q || `${d.name} ${d.id} ${imNames(d)} ${d.graphs?.map((g) => `${g.imCode} ${g.country ?? ""} ${g.datasetId ?? ""}`).join(" ") ?? ""}`.toLowerCase().includes(q));
   const head = (label: string, key: SortKey, cls = "") =>
     h("th", { class: `${cls}${sortKey === key ? (sortDesc ? " sorted desc" : " sorted") : ""}`, scope: "col" }, h("button", { type: "button", text: label, "aria-label": `Sort by ${label}` }));
   const table = h(
     "table",
     { class: "ds-table" },
-    h("thead", {}, h("tr", {}, head("Network", "name"), head("Infrastructure manager", "im"), head("ERA publication", "publishedAt"), head("Fetched", "fetchedAt"), head("Status", "status"), head("Stations", "ops", "num"), h("th", { scope: "col", text: "" }))),
+    h("thead", {}, h("tr", {}, head("Network", "name"), head("Infrastructure manager", "im"), head("ERA publication", "publishedAt"), head("Fetched", "fetchedAt"), head("Status", "status"), head("Stations", "ops", "num"), head("Border links", "borders", "num"), h("th", { scope: "col", text: "" }))),
   );
   table.querySelectorAll<HTMLButtonElement>("th button").forEach((b, i) => {
-    const keys: SortKey[] = ["name", "im", "publishedAt", "fetchedAt", "status", "ops"];
+    const keys: SortKey[] = ["name", "im", "publishedAt", "fetchedAt", "status", "ops", "borders"];
     b.addEventListener("click", () => {
       const k = keys[i]!;
       if (sortKey === k) sortDesc = !sortDesc;
@@ -120,12 +124,33 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
         h("td", { text: fmtDate(d.fetchedAt, true) }),
         h("td", {}, h("span", { class: `ds-status md-signal-${ASPECT[status]}` }, h("span", { class: "md-lamps", "aria-hidden": "true" }, h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" })), STATUS[status]), detail ? h("small", { text: detail }) : undefined),
         h("td", { class: "num", text: d.ops ? d.ops.toLocaleString() : "–" }),
+        borderCell(d, catalogue, opts.borders),
         actions,
       ),
     );
   }
   table.append(tbody);
   body.append(rows.length ? table : h("p", { class: "muted", text: catalogue.datasets.length ? "No dataset matches." : "No datasets listed: this deployment serves one bundle without a catalogue." }));
+  const unmatched = opts.borders?.unmatched.filter((u) => !q || rows.some((d) => d.id === u.dataset)) ?? [];
+  if (opts.borders && (opts.borders.links.length || unmatched.length)) {
+    const nameOf = (id: string) => catalogue.datasets.find((d) => d.id === id)?.name ?? id;
+    const details = h("details", { class: "ds-borders" }, h("summary", { text: `Border links: ${opts.borders.links.length} between the networks (same border point declared by both infrastructure managers, or two border points within ${opts.borders.threshold} m), derived by Routebook because RINF has none. ${unmatched.length} border point${unmatched.length === 1 ? "" : "s"} without a partner.` }));
+    if (unmatched.length) {
+      details.append(h("p", { class: "muted", text: "Border points no other dataset declares nearby; routes cannot cross there. Worth reporting to the infrastructure managers." }));
+      const ul = h("ul");
+      for (const u of unmatched) ul.append(h("li", {}, h("b", { text: nameOf(u.dataset) }), ` ${u.name} (${u.uopid})${u.reason === "no position" ? ", no position on the track network" : ""}`));
+      details.append(ul);
+    }
+    body.append(details);
+  }
+}
+
+function borderCell(d: DatasetInfo, catalogue: DatasetCatalogue, borders?: NetworkBordersIndex): HTMLTableCellElement {
+  const b = borders?.datasets[d.id];
+  if (!b || (!b.links && !b.unmatched)) return h("td", { class: "num", text: "–" });
+  const nameOf = (id: string) => catalogue.datasets.find((x) => x.id === id)?.name ?? id;
+  const withWhom = Object.entries(b.with).map(([id, n]) => `${nameOf(id)} ${n}`).join(", ");
+  return h("td", { class: "num" }, h("span", { text: String(b.links), title: withWhom }), withWhom ? h("small", { text: withWhom }) : undefined, b.unmatched ? h("small", { class: "warn", text: `${b.unmatched} unmatched` }) : undefined);
 }
 
 /** Open the dialog (built on first use). */

@@ -3,6 +3,7 @@ import type { OperationalPoint } from "@routebook/rinf-client";
 import { RoutingGraph } from "@routebook/routing";
 import {
   RoutebookIndex,
+  addBorderItems,
   buildRoutebook,
   parseGradientProfile,
   sortItems,
@@ -121,5 +122,37 @@ describe("parseGradientProfile", () => {
       { km: 110.998, permille: -9 },
       { km: 111.045, permille: -4.7 },
     ]);
+  });
+});
+
+describe("routes across RINF datasets", () => {
+  it("tags the items with their dataset, adds a border item and drops the twin border point", () => {
+    const graph = new RoutingGraph(topology);
+    const route = graph.route([{ ne: "P", start: 0, end: 0 }], [{ ne: "Q", start: 0, end: 0 }])!;
+    const border = op("EU1", "P", 1000, 1000);
+    const twin = { ...op("EU1", "Q", 1000, 1000), id: "EU1-twin" };
+    const index = new RoutebookIndex({ ...data, ops: [from, mid, to, border, twin] });
+    const rb = buildRoutebook({ index, route, from, to });
+    expect(rb.items.filter((i) => i.kind === "op" && i.data?.uopid === "EU1")).toHaveLength(2);
+    const across = addBorderItems(rb, { datasetOf: (ne) => (ne === "P" ? "nor" : "swe"), labelOf: (id) => ({ nor: "Bane NOR", swe: "Trafikverket" })[id] ?? id });
+    const borders = across.items.filter((i) => i.kind === "border");
+    expect(borders).toHaveLength(1);
+    expect(borders[0]).toMatchObject({ distance: 1000, label: "Bane NOR → Trafikverket", quality: "derived", dataset: "swe", data: { from: "nor", to: "swe" } });
+    expect(across.items.filter((i) => i.kind === "op" && i.data?.uopid === "EU1")).toHaveLength(1);
+    expect(across.items.find((i) => i.kind === "origin")?.dataset).toBe("nor");
+    expect(across.items.find((i) => i.kind === "destination")?.dataset).toBe("swe");
+    // the border item sorts after the border point at the same distance and before the line of the next dataset
+    const at1000 = across.items.filter((i) => i.distance === 1000).map((i) => i.kind);
+    expect(at1000.indexOf("op")).toBeLessThan(at1000.indexOf("border"));
+    expect(across.items.length).toBe(rb.items.length); // one added, one dropped
+  });
+
+  it("adds nothing on a route inside one dataset", () => {
+    const graph = new RoutingGraph(topology);
+    const route = graph.route([{ ne: "P", start: 0, end: 0 }], [{ ne: "Q", start: 0, end: 0 }])!;
+    const rb = buildRoutebook({ index: new RoutebookIndex(data), route, from, to });
+    const same = addBorderItems(rb, { datasetOf: () => "nor", labelOf: (id) => id });
+    expect(same.items.map((i) => i.kind)).toEqual(rb.items.map((i) => i.kind));
+    expect(same.items.every((i) => i.dataset === "nor")).toBe(true);
   });
 });

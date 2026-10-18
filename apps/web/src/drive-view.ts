@@ -43,7 +43,7 @@ const RATES = [1, 5, 20, 60];
 /** markers are shown for items this far ahead (and a little behind) the train */
 const MARKER_AHEAD = 3000;
 const MARKER_BEHIND = 80;
-const MARKER_KINDS = new Set(["signal", "speed", "op", "origin", "destination", "levelCrossing", "tunnel"]);
+const MARKER_KINDS = new Set(["signal", "speed", "op", "origin", "destination", "levelCrossing", "tunnel", "border"]);
 
 const SIGNAL_COLORS: Record<string, string> = {
   home: "#c0392b", exit: "#8e44ad", block: "#27ae60", intermediate: "#e67e22", shunting: "#7f8c8d", distant: "#f1c40f",
@@ -529,6 +529,8 @@ function cueText(item: RoutebookItem): string {
       return `Tunnel ${item.label ?? ""}${typeof item.data?.length === "number" ? ` (${formatDistance(item.data.length as number)})` : ""}`;
     case "levelCrossing":
       return item.label ? `Level crossing ${item.label}` : "Level crossing";
+    case "border":
+      return `Infrastructure manager change: ${item.label ?? ""}`;
     default:
       return item.label ?? item.kind;
   }
@@ -574,7 +576,7 @@ function markerElement(item: RoutebookItem): HTMLElement {
     );
     if (item.label) inner.append(el("span", "drv-mk-label", item.label));
   } else {
-    const flag = el("span", "drv-mk-flag", item.kind === "levelCrossing" ? "✕ level crossing" : item.kind === "tunnel" ? `⌒ ${item.label ?? "tunnel"}` : (item.label ?? ""));
+    const flag = el("span", "drv-mk-flag", item.kind === "levelCrossing" ? "✕ level crossing" : item.kind === "tunnel" ? `⌒ ${item.label ?? "tunnel"}` : item.kind === "border" ? `⚑ ${item.label ?? "border"}` : (item.label ?? ""));
     inner.append(flag, el("i", "drv-mk-pole"));
   }
   root.append(inner);

@@ -69,6 +69,7 @@ export const KIND_LABELS: Record<string, string> = {
   origin: "Origin",
   destination: "Destination",
   op: "Operational point",
+  border: "Infrastructure manager change",
   line: "Line",
   speed: "Speed",
   gradient: "Gradient",

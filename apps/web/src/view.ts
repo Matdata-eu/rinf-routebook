@@ -29,6 +29,7 @@ function symbol(kind: string, data?: Record<string, unknown>): SVGSVGElement | H
     speed: `<circle cx="10" cy="10" r="7.5" fill="#fff" stroke="#c0392b" stroke-width="2.5"/>`,
     gradient: `<path d="M2 16 L18 6 L18 16 Z" fill="var(--line-strong)"/>`,
     line: `<path d="M2 10 H18" stroke="var(--brand)" stroke-width="4"/>`,
+    border: `<path d="M4 18 V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 3 H16 L13 7 L16 11 H5 Z" fill="var(--brand-strong)"/>`,
     missing: `<path d="M10 2 L19 18 H1 Z" fill="var(--amber)" stroke="var(--amber-ink)" stroke-width="1.2"/><text x="10" y="16" font-size="10" font-weight="700" text-anchor="middle" fill="var(--on-amber)">!</text>`,
   };
   const signalColors: Record<string, string> = {
@@ -126,6 +127,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
     if (item.kind === "tunnel" && typeof item.data?.length === "number") extra.push(`${Math.round(item.data.length as number)} m`);
     if (item.kind === "op" && item.data?.reference === "area-entry") extra.push("area entry");
     if (item.kind === "missing") extra.push(item.note ?? "no data in RINF");
+    if (item.kind === "border") extra.push("border link derived by Routebook");
     if (extra.length) label.append(el("small", undefined, extra.join(" · ")));
     li.append(label);
 

@@ -16,6 +16,7 @@ import {
   saveSnapshot,
   saveWebBundle,
   writeDatasetIndex,
+  writeNetworkIndex,
   readCatalogue,
   datasetFolder,
   runSync,
@@ -40,6 +41,9 @@ Commands:
                             what ERA published for each of them and the outcome of the last fetch)
                             and the network index <data>/web/index/ (all OPs and lines, for the map
                             and the search across datasets)
+  link                      Rebuild the border links between the datasets (<data>/web/index/borders.json)
+                            and print them: --threshold <m> links border points of two datasets within
+                            that distance (default 300)
   sync                      Keep the data current: compare what ERA publishes with the catalogue and
                             fetch only the datasets that are new, changed or failed last time, then
                             sleep and check again (--once for a single pass). The server runs this
@@ -94,6 +98,7 @@ async function main() {
       skip: { type: "string" },
       datasets: { type: "string" },
       minutes: { type: "string" },
+      threshold: { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       data: { type: "string" },
@@ -136,6 +141,17 @@ async function main() {
   if (cmd === "index") {
     const list = await writeDatasetIndex(webRoot);
     console.error(`${join(webRoot, "datasets.json")}: ${list.map((d) => `${d.id}${d.status === "loaded" ? "" : ` (${d.status})`}`).join(", ") || "no datasets"}`);
+    return;
+  }
+
+  if (cmd === "link") {
+    const threshold = values.threshold ? Number(values.threshold) : undefined;
+    const list = await writeDatasetIndex(webRoot, { networkIndex: false });
+    const { borders } = await writeNetworkIndex(webRoot, list, { ...(threshold !== undefined && Number.isFinite(threshold) ? { borderThreshold: threshold } : {}) });
+    const name = (id: string) => list.find((d) => d.id === id)?.name ?? id;
+    for (const l of borders.links) console.log(`${name(l.a.dataset)} ${l.a.name} (${l.a.uopid}) <-> ${name(l.b.dataset)} ${l.b.name} (${l.b.uopid})  ${l.method}${l.distance ? `, ${l.distance} m` : ""}`);
+    for (const u of borders.unmatched) console.log(`unmatched: ${name(u.dataset)} ${u.name} (${u.uopid}) ${u.reason}`);
+    console.error(`${join(webRoot, "index", "borders.json")}: ${borders.links.length} border links, ${borders.unmatched.length} border points without a partner`);
     return;
   }
 

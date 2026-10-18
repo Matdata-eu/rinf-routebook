@@ -5,6 +5,8 @@ export type ItemKind =
   | "origin"
   | "destination"
   | "op"
+  /** change of infrastructure manager at a border link between two RINF datasets (derived by Routebook) */
+  | "border"
   | "line"
   | "speed"
   | "gradient"
@@ -38,6 +40,8 @@ export interface RoutebookItem {
   source?: string;
   /** kind-specific values, e.g. { speed: 130 } or { gradient: -9 } */
   data?: Record<string, unknown>;
+  /** The RINF dataset the item comes from, on routes across networks. */
+  dataset?: string;
   note?: string;
 }
 

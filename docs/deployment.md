@@ -49,7 +49,7 @@ The container runs as the unprivileged `node` user (uid 1000): a host folder mou
 
 ## Choosing the RINF data
 
-The ERA knowledge graph holds one named graph per infrastructure manager (IM). A *dataset* in Routebook is one or more of those graphs, shown as one network. The app opens on every dataset at once (map and search), and the **Network** picker (or `?dataset=nor`, `?dataset=all`) narrows the map and the search to one; a dataset's data is only downloaded when a route needs it, so a deployment with all of RINF costs the browser no more than one with a single country until it routes.
+The ERA knowledge graph holds one named graph per infrastructure manager (IM). A *dataset* in Routebook is one or more of those graphs, shown as one network. The app opens on every dataset at once (map and search), and the **Network** picker (or `?dataset=nor`, `?dataset=all`) narrows the map and the search to one; a dataset's data is only downloaded when a route needs it, so a deployment with all of RINF costs the browser no more than one with a single country until it routes. Routes run across datasets over the border links the catalogue writer derives (`routebook link`, see [datasets.md](datasets.md#border-links-datawebindexbordersjson)); the Datasets dialog shows how many links each dataset has and the border points without one.
 
 | `ROUTEBOOK_DATASETS` / `--dataset` | Fetches |
 |---|---|

@@ -4,7 +4,7 @@
  * sync), so that search and the map cover all of RINF before any bundle is loaded.
  */
 import type { Snapshot } from "@routebook/rinf-client";
-import { datasetIndex, opKey, parseOpsIndex, parseSolsIndex, type IndexDataset, type IndexOp, type IndexSolRow } from "@routebook/rinf-client/network-index";
+import { datasetIndex, opKey, parseBordersIndex, parseOpsIndex, parseSolsIndex, type IndexDataset, type IndexOp, type IndexSolRow, type NetworkBordersIndex } from "@routebook/rinf-client/network-index";
 import type { DatasetInfo } from "./datasets.js";
 
 export interface Network {
@@ -14,22 +14,26 @@ export interface Network {
   sols: IndexSolRow[];
   /** `${dataset}/${uopid}` -> op */
   byKey: Map<string, IndexOp>;
+  /** The border links between the datasets (`index/borders.json`); none without the file. */
+  borders: NetworkBordersIndex;
   /** Built from one bundle because the data folder has no index (written before the index existed). */
   fromBundle?: string;
 }
 
-function build(datasets: Record<string, IndexDataset>, ops: IndexOp[], sols: IndexSolRow[], fromBundle?: string): Network {
-  return { datasets, ops, sols, byKey: new Map(ops.map((op) => [opKey(op), op])), ...(fromBundle ? { fromBundle } : {}) };
+function build(datasets: Record<string, IndexDataset>, ops: IndexOp[], sols: IndexSolRow[], borders = parseBordersIndex(undefined), fromBundle?: string): Network {
+  return { datasets, ops, sols, byKey: new Map(ops.map((op) => [opKey(op), op])), borders, ...(fromBundle ? { fromBundle } : {}) };
 }
 
 /** Load the network index; undefined when the data folder has none. */
 export async function loadNetwork(base: string, fetchImpl: typeof fetch = fetch): Promise<Network | undefined> {
   try {
-    const [opsRes, solsRes] = await Promise.all([fetchImpl(`${base}index/ops.json`, { cache: "no-cache" }), fetchImpl(`${base}index/sols.json`, { cache: "no-cache" })]);
-    if (!opsRes.ok) return undefined;
+    const get = (name: string) => fetchImpl(`${base}index/${name}.json`, { cache: "no-cache" }).catch(() => undefined);
+    const [opsRes, solsRes, bordersRes] = await Promise.all([get("ops"), get("sols"), get("borders")]);
+    if (!opsRes?.ok) return undefined;
     const { datasets, ops } = parseOpsIndex(await opsRes.json());
-    const sols = solsRes.ok ? parseSolsIndex(await solsRes.json()) : [];
-    return build(datasets, ops, sols);
+    const sols = solsRes?.ok ? parseSolsIndex(await solsRes.json()) : [];
+    const borders = parseBordersIndex(bordersRes?.ok ? await bordersRes.json().catch(() => undefined) : undefined);
+    return build(datasets, ops, sols, borders);
   } catch {
     return undefined;
   }
@@ -39,7 +43,7 @@ export async function loadNetwork(base: string, fetchImpl: typeof fetch = fetch)
 export function networkFromBundle(id: string, snapshot: Snapshot): Network {
   const part = datasetIndex(id, snapshot);
   const { datasets, ops } = parseOpsIndex({ version: part.version, datasets: { [id]: { name: part.dataset.name, ...(part.dataset.imName ? { imName: part.dataset.imName } : {}) } }, ops: part.ops });
-  return build(datasets, ops, part.sols, id);
+  return build(datasets, ops, part.sols, undefined, id);
 }
 
 /**
@@ -64,8 +68,8 @@ export function visibleOps(network: Network, filter: string | undefined): IndexO
 
 /**
  * The OP a `?from=` / `?to=` code means: `NODRM@tst` names the dataset; a bare code is looked up in
- * the filtered dataset when there is one, else in any, and a border point declared by two IMs
- * resolves to the routable one, then the first.
+ * the filtered dataset when there is one (the other end's dataset for `?to=`), then in any, and a
+ * border point declared by two IMs resolves to the routable one, then the first.
  */
 export function findByCode(network: Network, code: string | null | undefined, filter?: string): IndexOp | undefined {
   const raw = code?.trim().toLowerCase();
@@ -74,7 +78,7 @@ export function findByCode(network: Network, code: string | null | undefined, fi
   const c = at >= 0 ? raw.slice(0, at) : raw;
   const ds = at >= 0 ? raw.slice(at + 1) : filter;
   let hits = network.ops.filter((op) => op.uopid.toLowerCase() === c && (!ds || op.dataset === ds));
-  if (!hits.length && at >= 0) hits = network.ops.filter((op) => op.uopid.toLowerCase() === c);
+  if (!hits.length && ds) hits = network.ops.filter((op) => op.uopid.toLowerCase() === c);
   return hits.find((op) => op.routable) ?? hits[0];
 }
 
