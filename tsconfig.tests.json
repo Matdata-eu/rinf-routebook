@@ -9,6 +9,7 @@
     "baseUrl": ".",
     "paths": {
       "@routebook/rinf-client/compact": ["packages/rinf-client/src/compact.ts"],
+      "@routebook/rinf-client/network-index": ["packages/rinf-client/src/network-index.ts"],
       "@routebook/*": ["packages/*/src/index.ts"]
     }
   },

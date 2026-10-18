@@ -1,5 +1,3 @@
-import type { OperationalPoint } from "@routebook/rinf-client";
-
 /**
  * Lowercase, strip diacritics and fold Nordic letters so that "lillestrom"
  * finds "Lillestrøm" and "asker" finds "Åsker".
@@ -15,8 +13,20 @@ export function normalizeName(s: string): string {
     .trim();
 }
 
-export interface SearchEntry {
-  op: OperationalPoint;
+/** What the search needs of an operational point: an index entry or a full OP of a bundle. */
+export interface Searchable {
+  uopid: string;
+  name: string;
+  /** era:opType IRI or its last part ("10" = station). */
+  type?: string;
+  /** Can be the end of a route (an index entry says so; a full OP has points or areas). */
+  routable?: boolean;
+  points?: unknown[];
+  areas?: unknown[];
+}
+
+export interface SearchEntry<T extends Searchable = Searchable> {
+  item: T;
   name: string;
   words: string[];
   uopid: string;
@@ -25,26 +35,30 @@ export interface SearchEntry {
   routable: boolean;
 }
 
-export function buildSearchIndex(ops: OperationalPoint[]): SearchEntry[] {
-  return ops.map((op) => {
-    const name = normalizeName(op.name);
+export function isStation(type: string | undefined): boolean {
+  return type === "10" || (type?.endsWith("/10") ?? false);
+}
+
+export function buildSearchIndex<T extends Searchable>(items: T[]): SearchEntry<T>[] {
+  return items.map((item) => {
+    const name = normalizeName(item.name);
     return {
-      op,
+      item,
       name,
       words: name.split(" "),
-      uopid: op.uopid.toLowerCase(),
-      station: op.type?.endsWith("/10") ?? false,
-      routable: op.points.length > 0 || op.areas.length > 0,
+      uopid: item.uopid.toLowerCase(),
+      station: isStation(item.type),
+      routable: item.routable ?? ((item.points?.length ?? 0) > 0 || (item.areas?.length ?? 0) > 0),
     };
   });
 }
 
 /** Ranked OP search: exact name, exact code, name prefix, word prefix, substring. */
-export function searchOps(index: SearchEntry[], query: string, limit = 8): OperationalPoint[] {
+export function searchOps<T extends Searchable>(index: SearchEntry<T>[], query: string, limit = 8): T[] {
   const q = normalizeName(query);
   if (!q) return [];
   const code = query.trim().toLowerCase();
-  const scored: Array<{ e: SearchEntry; score: number }> = [];
+  const scored: Array<{ e: SearchEntry<T>; score: number }> = [];
   for (const e of index) {
     let score: number;
     if (e.name === q) score = 0;
@@ -63,5 +77,5 @@ export function searchOps(index: SearchEntry[], query: string, limit = 8): Opera
       a.e.name.length - b.e.name.length ||
       a.e.name.localeCompare(b.e.name),
   );
-  return scored.slice(0, limit).map((s) => s.e.op);
+  return scored.slice(0, limit).map((s) => s.e.item);
 }

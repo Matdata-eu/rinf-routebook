@@ -83,6 +83,10 @@ One check costs about two small requests per dataset (some 70 for the whole endp
 
 `ok` says that the server runs; a failed dataset does not make the instance unhealthy, since the previous data stays on offer.
 
+## The network index: `data/web/index/`
+
+The app no longer needs a bundle to show a network. Every bundle carries an `index.json` (its operational points with position, type and whether they are on the routable topology, and its sections of line simplified to about 50 m), and whenever the catalogue is written (`fetch`, `fetch-all`, `sync`, `index`) the parts of every loaded dataset are merged into `index/ops.json` and `index/sols.json`, written atomically and precompressed like the bundles. A bundle fetched before this index existed is indexed from its `ops.json` and `sols.json`. The index weighs tens of KB per country, so the app opens on all of RINF at once; a dataset's bundle (a few MB) is only fetched when a route needs it. `routebook index` rebuilds the catalogue and the index from the bundles on disk.
+
 ## Memory
 
 A fetch holds one dataset in memory at a time; the sync processes them one after the other. Norway fits in Node's default heap. The largest networks (Germany, France) need more: the sync child inherits `NODE_OPTIONS` from the container's environment, so set `NODE_OPTIONS=--max-old-space-size=6144` or more for `ROUTEBOOK_DATASETS=all` (the public instance does, see `deploy/matdata/docker-compose.yml`). The sync log ends each pass with `peak memory N MB`: measure it on the first full run and give the container that much. Idle, the server and the sleeping sync need about 100 MB together.

@@ -1,7 +1,8 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { constants as zlib, brotliCompressSync, gzipSync } from "node:zlib";
-import { join } from "node:path";
-import { WEB_PARTS, toWebBundle } from "./compact.js";
+import { basename, join } from "node:path";
+import { WEB_PARTS, expandIris, toWebBundle, type WebBundleMeta } from "./compact.js";
+import { datasetIndex, mergeIndexes, type DatasetIndex } from "./network-index.js";
 import { fingerprintsDiffer, imCodeOf, latestPublication } from "./era.js";
 import type { GraphProvenance, Snapshot, SnapshotMeta } from "./types.js";
 
@@ -65,8 +66,10 @@ export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Rec
   if (atomic) await rm(target, { recursive: true, force: true });
   await mkdir(target, { recursive: true });
   const parts = toWebBundle(snapshot, { extras });
-  for (const part of [...WEB_PARTS, ...Object.keys(extras)]) {
-    const json = JSON.stringify(parts[part]);
+  // the dataset's part of the network index (index/ops.json, index/sols.json), merged by writeDatasetIndex
+  const index = datasetIndex(basename(dir), snapshot);
+  for (const part of [...WEB_PARTS, ...Object.keys(extras), "index"]) {
+    const json = JSON.stringify(part === "index" ? index : parts[part]);
     const file = join(target, `${part}.json`);
     await writeFile(file, json);
     if (compress) {
@@ -80,6 +83,57 @@ export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Rec
     }
   }
   if (atomic) await swapDirectory(target, dir);
+}
+
+/**
+ * The index part of a bundle: `index.json` as saveWebBundle writes it, or, for a bundle written
+ * before there was one, derived from its ops.json and sols.json.
+ */
+export async function readDatasetIndex(root: string, id: string): Promise<DatasetIndex | undefined> {
+  const dir = join(root, id);
+  try {
+    const parsed = JSON.parse(await readFile(join(dir, "index.json"), "utf8")) as DatasetIndex;
+    if (parsed && Array.isArray(parsed.ops) && Array.isArray(parsed.sols) && parsed.dataset?.id) return parsed;
+  } catch {
+    /* no index.json: derive it */
+  }
+  try {
+    const meta = JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as WebBundleMeta;
+    const prefixes = meta.prefixes ?? {};
+    const ops = expandIris(JSON.parse(await readFile(join(dir, "ops.json"), "utf8")), prefixes) as Snapshot["ops"];
+    const sols = expandIris(JSON.parse(await readFile(join(dir, "sols.json"), "utf8")), prefixes) as Snapshot["sols"];
+    return datasetIndex(id, { meta, ops, sols });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Write `root/index/ops.json` and `root/index/sols.json` (with .gz/.br) from the index parts of the
+ * datasets that have data, swapped into place when complete. Returns the number of OPs indexed.
+ */
+export async function writeNetworkIndex(root: string, entries: DatasetEntry[]): Promise<{ datasets: number; ops: number; sols: number }> {
+  const parts: DatasetIndex[] = [];
+  for (const e of entries) {
+    if (!e.fetchedAt) continue;
+    const part = await readDatasetIndex(root, e.id);
+    if (part) parts.push(part);
+  }
+  const { ops, sols } = mergeIndexes(parts);
+  const dir = join(root, "index");
+  const tmp = `${dir}.tmp`;
+  await rm(tmp, { recursive: true, force: true });
+  await mkdir(tmp, { recursive: true });
+  for (const [name, value] of [["ops", ops], ["sols", sols]] as const) {
+    const json = JSON.stringify(value);
+    const file = join(tmp, `${name}.json`);
+    await writeFile(file, json);
+    const { gz, br } = compressPart(json);
+    await writeFile(`${file}.gz`, gz);
+    await writeFile(`${file}.br`, br);
+  }
+  await swapDirectory(tmp, dir);
+  return { datasets: parts.length, ops: ops.ops.length, sols: sols.sols.length };
 }
 
 /**
@@ -230,6 +284,8 @@ export interface IndexOptions {
   /** When the endpoint was compared with the data (default: kept from the previous catalogue). */
   checkedAt?: string;
   endpoint?: string;
+  /** Also rewrite the network index (`index/ops.json`, `index/sols.json`); default true. */
+  networkIndex?: boolean;
 }
 
 /**
@@ -241,7 +297,7 @@ export async function writeDatasetIndex(root: string, opts: IndexOptions = {}): 
   const previous = await readCatalogue(root);
   const byId = new Map<string, DatasetEntry>();
   for (const d of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-    if (!d.isDirectory()) continue;
+    if (!d.isDirectory() || d.name === "index") continue;
     try {
       const meta = JSON.parse(await readFile(join(root, d.name, "meta.json"), "utf8")) as SnapshotMeta;
       byId.set(d.name, datasetEntry(d.name, meta));
@@ -309,5 +365,6 @@ export async function writeDatasetIndex(root: string, opts: IndexOptions = {}): 
   };
   await mkdir(root, { recursive: true });
   await writeFile(join(root, "datasets.json"), JSON.stringify(catalogue, null, 2));
+  if (opts.networkIndex !== false) await writeNetworkIndex(root, entries);
   return entries;
 }

@@ -14,6 +14,10 @@
     "./compact": {
       "types": "./dist/compact.d.ts",
       "default": "./dist/compact.js"
+    },
+    "./network-index": {
+      "types": "./dist/network-index.d.ts",
+      "default": "./dist/network-index.js"
     }
   },
   "files": [

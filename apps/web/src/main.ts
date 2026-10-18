@@ -1,10 +1,12 @@
 import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles.css";
-import type { OperationalPoint, Snapshot } from "@routebook/rinf-client";
-import { RouteEngine, loadBundle, type RouteResult } from "./engine.js";
+import type { OperationalPoint } from "@routebook/rinf-client";
+import type { IndexOp } from "@routebook/rinf-client/network-index";
+import { RouteEngine, loadBundle, type Bundle, type RouteResult } from "./engine.js";
 import { bounds, pointAtDistance, type LngLat } from "./geometry.js";
 import { buildSearchIndex, searchOps, type SearchEntry } from "./search.js";
+import { codeOf, findByCode, loadNetwork, networkFromBundle, opsBounds, opsGeoJson, pickFilter, solsGeoJson, visibleOps, type Network } from "./network.js";
 import { markSelected, renderRoutebook } from "./view.js";
 import { KIND_LABELS } from "./strip.js";
 import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
@@ -21,7 +23,9 @@ const BASE = import.meta.env.BASE_URL;
 // runtime configuration (config.json, written by the server from its settings) and the datasets on offer
 const [CONFIG, CATALOGUE] = await Promise.all([loadRuntimeConfig(`${BASE}config.json`), loadCatalogue(`${BASE}datasets.json`)]);
 const DATASETS = loadable(CATALOGUE.datasets);
-const DATASET = pickDataset(DATASETS, params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
+/** The dataset the map and the search are limited to; undefined: all of them. Deep links (`?dataset=`) and the Network picker set it. */
+let FILTER = pickFilter(DATASETS, params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
+const datasetName = (id: string) => CATALOGUE.datasets.find((d) => d.id === id)?.name ?? network?.datasets[id]?.name ?? id;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const status = $("status");
@@ -145,40 +149,42 @@ const drive = new DriveView(map, document.querySelector(".stage") as HTMLElement
 
 const empty = { type: "FeatureCollection" as const, features: [] };
 
-function addLayers(snapshot: Snapshot): void {
-  const sols = {
-    type: "FeatureCollection" as const,
-    features: snapshot.sols.flatMap((s) => {
-      const m = s.wkt?.match(/LINESTRING\s*\(([^)]*)\)/i);
-      if (!m) return [];
-      const coordinates = m[1]!.split(",").map((p) => p.trim().split(/\s+/).map(Number));
-      return [{ type: "Feature" as const, geometry: { type: "LineString" as const, coordinates }, properties: { label: s.label ?? "" } }];
-    }),
-  };
-  const ops = {
-    type: "FeatureCollection" as const,
-    features: snapshot.ops
-      .filter((o) => o.lon !== undefined && o.lat !== undefined)
-      .map((o) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: [o.lon!, o.lat!] },
-        properties: { id: o.id, name: o.name, uopid: o.uopid, station: o.type?.endsWith("/10") ? 1 : 0 },
-      })),
-  };
-  map.addSource("sols", { type: "geojson", data: sols, attribution: rinfAttribution(snapshot.meta) });
-  map.addSource("ops", { type: "geojson", data: ops });
+/** The MapLibre filter for the Network picker: only the chosen dataset's features, or everything. */
+function datasetFilter(extra?: maplibregl.ExpressionSpecification): maplibregl.ExpressionSpecification | null {
+  const own: maplibregl.ExpressionSpecification | undefined = FILTER ? ["==", ["get", "dataset"], FILTER] : undefined;
+  if (own && extra) return ["all", own, extra];
+  return own ?? extra ?? null;
+}
+
+/** `filter` for a layer specification, left out when there is none (MapLibre rejects an undefined filter). */
+function withFilter(f: maplibregl.ExpressionSpecification | null): { filter?: maplibregl.ExpressionSpecification } {
+  return f ? { filter: f } : {};
+}
+
+function applyFilter(): void {
+  if (!map.getLayer("ops")) return;
+  map.setFilter("sols", datasetFilter());
+  map.setFilter("ops", datasetFilter());
+  map.setFilter("op-labels", datasetFilter(["==", ["get", "station"], 1]));
+}
+
+/** The railway layers from the network index: every section of line and operational point on offer. */
+function addLayers(net: Network): void {
+  map.addSource("sols", { type: "geojson", data: solsGeoJson(net), attribution: rinfAttribution(credit(imNamesOf(net))) });
+  map.addSource("ops", { type: "geojson", data: opsGeoJson(net) });
   // lineMetrics: the Drive view colours the travelled part of the route by line-progress
   map.addSource("route", { type: "geojson", data: empty, lineMetrics: true });
   map.addSource("endpoints", { type: "geojson", data: empty });
   map.addSource("selected", { type: "geojson", data: empty });
 
-  map.addLayer({ id: "sols", type: "line", source: "sols", paint: { "line-color": basemap.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
+  map.addLayer({ id: "sols", type: "line", source: "sols", ...withFilter(datasetFilter()), paint: { "line-color": basemap.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
   map.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 6, 12, 12] } });
   map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#d35400", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 12, 7] } });
   map.addLayer({
     id: "ops",
     type: "circle",
     source: "ops",
+    ...withFilter(datasetFilter()),
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, ["case", ["==", ["get", "station"], 1], 2.5, 1.5], 11, ["case", ["==", ["get", "station"], 1], 7, 4]],
       "circle-color": ["case", ["==", ["get", "station"], 1], "#1f4e79", "#7f8c8d"],
@@ -191,7 +197,7 @@ function addLayers(snapshot: Snapshot): void {
     type: "symbol",
     source: "ops",
     minzoom: 8,
-    filter: ["==", ["get", "station"], 1],
+    ...withFilter(datasetFilter(["==", ["get", "station"], 1])),
     layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
     paint: { "text-color": "#1f2d3a", "text-halo-color": "#fff", "text-halo-width": 1.5 },
   });
@@ -201,19 +207,32 @@ function addLayers(snapshot: Snapshot): void {
   map.on("mouseenter", "ops", () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", "ops", () => (map.getCanvas().style.cursor = ""));
   map.on("click", "ops", (e) => {
-    const id = e.features?.[0]?.properties?.id as string | undefined;
-    const op = id ? opsById.get(id) : undefined;
+    const key = e.features?.[0]?.properties?.key as string | undefined;
+    const op = key ? network?.byKey.get(key) : undefined;
     if (op) openOpPopup(op, e.lngLat);
   });
 }
 
-function openOpPopup(op: OperationalPoint, at: maplibregl.LngLatLike): void {
+/** Argument of rinfAttribution for an optional IM name. */
+function credit(imName: string | undefined): { imName?: string; name?: string; country: string } {
+  return { country: "", ...(imName ? { imName } : {}) };
+}
+
+/** The infrastructure managers of the datasets on offer, for the data credit; one name when there is one dataset. */
+function imNamesOf(net: Network): string | undefined {
+  const ids = FILTER ? [FILTER] : Object.keys(net.datasets);
+  const names = [...new Set(ids.map((id) => net.datasets[id]?.imName ?? CATALOGUE.datasets.find((d) => d.id === id)?.imName).filter((n): n is string => !!n))];
+  if (!names.length) return undefined;
+  return names.length <= 3 ? names.join(", ") : `${names.length} infrastructure managers`;
+}
+
+function openOpPopup(op: IndexOp, at: maplibregl.LngLatLike): void {
   const box = document.createElement("div");
   box.className = "op-popup";
   const name = document.createElement("strong");
   name.textContent = op.name;
   const code = document.createElement("span");
-  code.textContent = ` ${op.uopid}`;
+  code.textContent = ` ${op.uopid}${FILTER ? "" : ` · ${datasetName(op.dataset)}`}`;
   const buttons = document.createElement("div");
   const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px" });
   for (const [role, label] of [["from", "Route from here"], ["to", "Route to here"]] as const) {
@@ -233,11 +252,20 @@ function openOpPopup(op: OperationalPoint, at: maplibregl.LngLatLike): void {
 
 // ---------------------------------------------------------------- state
 
-let engine: RouteEngine | undefined;
-let searchIndex: SearchEntry[] = [];
-const opsById = new Map<string, OperationalPoint>();
-const selection: { from?: OperationalPoint; to?: OperationalPoint } = {};
-let result: RouteResult | undefined;
+/** The network index (search and map); the bundles load on demand into `engines`. */
+let network: Network | undefined;
+/** Loaded datasets: the routing engine of each, kept for the session. */
+const engines = new Map<string, { engine: RouteEngine; bundle: Bundle }>();
+const loading = new Map<string, Promise<{ engine: RouteEngine; bundle: Bundle }>>();
+/** How many full bundles the browser keeps; the ones a route needs are never dropped. */
+const MAX_LOADED = 6;
+let searchIndex: SearchEntry<IndexOp>[] = [];
+const selection: { from?: IndexOp; to?: IndexOp } = {};
+/** The route, with the engine (dataset) that computed it. */
+type Routed = RouteResult & { engine: RouteEngine; dataset: string };
+let result: Routed | undefined;
+/** Routes requested while a bundle was loading are superseded by the next one. */
+let computeToken = 0;
 type View = "map" | "schematic" | "drive";
 let view: View = params.get("view") === "schematic" ? "schematic" : params.get("view") === "drive" ? "drive" : "map";
 /** train position and autoplay from the URL, used for the first route only */
@@ -264,14 +292,14 @@ const hiddenKinds = new Set<string>(
   })(),
 );
 
-function setEndpoint(role: "from" | "to", op: OperationalPoint | undefined): void {
+function setEndpoint(role: "from" | "to", op: IndexOp | undefined): void {
   if (op) selection[role] = op;
   else delete selection[role];
   (role === "from" ? fromInput : toInput).value = op ? op.name : "";
   update();
 }
 
-function opLngLat(op: OperationalPoint): LngLat | undefined {
+function opLngLat(op: Pick<IndexOp, "lon" | "lat">): LngLat | undefined {
   return op.lon !== undefined && op.lat !== undefined ? [op.lon, op.lat] : undefined;
 }
 
@@ -279,7 +307,7 @@ function syncUrl(): void {
   const url = new URL(location.href);
   for (const role of ["from", "to"] as const) {
     const op = selection[role];
-    if (op) url.searchParams.set(role, op.uopid);
+    if (op && network) url.searchParams.set(role, codeOf(network, op, FILTER));
     else url.searchParams.delete(role);
   }
   if (view !== "map") url.searchParams.set("view", view);
@@ -295,7 +323,10 @@ function syncUrl(): void {
   if (layers !== defaultLayers) url.searchParams.set("layers", layers);
   else url.searchParams.delete("layers");
   url.searchParams.delete("country");
-  if (DATASETS.length > 1 || params.has("dataset") || params.has("country")) url.searchParams.set("dataset", DATASET);
+  // the filter, when it is not what the app would pick on its own
+  const own = pickFilter(DATASETS, null, CONFIG.defaultDataset);
+  if (FILTER !== own) url.searchParams.set("dataset", FILTER ?? "all");
+  else url.searchParams.delete("dataset");
   history.replaceState(null, "", url);
 }
 
@@ -310,26 +341,68 @@ function update(): void {
   (map.getSource("endpoints") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: endpoints });
   (map.getSource("selected") as GeoJSONSource | undefined)?.setData(empty);
 
-  if (!engine) return;
+  if (!network) return;
   if (!selection.from || !selection.to) {
     result = undefined;
+    computeToken++;
     (map.getSource("route") as GeoJSONSource | undefined)?.setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
     if (view === "drive") drive.start(undefined);
+    updateProvenance();
     setState("ready", selection.from || selection.to ? "Pick the other end of the route." : "");
     return;
   }
   setState("routing", "Routing…");
   // let the status paint before the (synchronous) routing
-  setTimeout(compute, 0);
+  const token = ++computeToken;
+  setTimeout(() => void compute(token), 0);
 }
 
-function compute(): void {
-  if (!engine || !selection.from || !selection.to) return;
+/** The routing engine of a dataset: the bundle is fetched the first time a route needs it, then kept. */
+function loadEngine(id: string): Promise<{ engine: RouteEngine; bundle: Bundle }> {
+  const have = engines.get(id);
+  if (have) return Promise.resolve(have);
+  let pending = loading.get(id);
+  if (!pending) {
+    pending = loadBundle(`${BASE}${id}`)
+      .then((bundle) => {
+        const loaded = { engine: new RouteEngine(bundle.snapshot, bundle.switches ? { switches: bundle.switches } : {}), bundle };
+        // keep the browser's memory in check: drop the datasets loaded longest ago, never the route's
+        for (const [old] of engines) {
+          if (engines.size < MAX_LOADED) break;
+          if (old !== result?.dataset) engines.delete(old);
+        }
+        engines.set(id, loaded);
+        return loaded;
+      })
+      .finally(() => loading.delete(id));
+    loading.set(id, pending);
+  }
+  return pending;
+}
+
+/** The full OP behind an index entry, in its loaded bundle (a border point declared twice: the routable one). */
+function fullOp(bundle: Bundle, op: IndexOp): OperationalPoint {
+  const hits = bundle.snapshot.ops.filter((o) => o.uopid === op.uopid);
+  const found = hits.find((o) => o.points.length || o.areas.length) ?? hits[0];
+  if (!found) throw new Error(`${op.name} (${op.uopid}) is not in the ${datasetName(op.dataset)} data any more; the index is being updated`);
+  return found;
+}
+
+async function compute(token: number): Promise<void> {
+  const { from, to } = selection;
+  if (!network || !from || !to) return;
   try {
+    if (from.dataset !== to.dataset) {
+      throw new Error(`${from.name} is in ${datasetName(from.dataset)} and ${to.name} in ${datasetName(to.dataset)}: routes across networks come in the next release, when the border links between the RINF datasets are in place.`);
+    }
+    if (!engines.has(from.dataset)) setState("routing", `Loading ${datasetName(from.dataset)}…`);
+    const { engine, bundle } = await loadEngine(from.dataset);
+    if (token !== computeToken) return;
     const t0 = performance.now();
-    result = engine.route(selection.from, selection.to);
+    result = { ...engine.route(fullOp(bundle, from), fullOp(bundle, to)), engine, dataset: from.dataset };
+    drive.setNetwork(bundle.snapshot.geometry ?? {});
     const ms = Math.round(performance.now() - t0);
     (map.getSource("route") as GeoJSONSource).setData({
       type: "Feature",
@@ -344,9 +417,12 @@ function compute(): void {
       drive.start(result, { at: 0, play: false, ...driveStart });
       driveStart = undefined;
     }
+    updateProvenance(result.dataset);
     setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)`);
   } catch (e) {
+    if (token !== computeToken) return;
     result = undefined;
+    updateProvenance();
     (map.getSource("route") as GeoJSONSource).setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
@@ -399,7 +475,7 @@ const schematicScroll = $("sch-scroll");
 function drawSchematic(): void {
   schematicView = undefined;
   if (view !== "schematic") return;
-  if (!engine || !result) {
+  if (!result) {
     const d = document.createElement("p");
     d.className = "sch-empty";
     d.textContent = "Choose a route to see its schematic track layout: the route as a straight line, with every track around it in its own lane.";
@@ -407,7 +483,7 @@ function drawSchematic(): void {
     return;
   }
   if (schematic?.result !== result) {
-    const { heuristic, solved } = engine.schematics(result, solver);
+    const { heuristic, solved } = result.engine.schematics(result, solver);
     const entry = { result, layout: heuristic };
     schematic = entry;
     schematicScroll.dataset.layout = "heuristic";
@@ -450,7 +526,7 @@ function setView(next: View): void {
   if (next === "map") {
     map.resize();
     if (mapNeedsFit || leavingDrive) fitRoute();
-  } else if (next === "drive" && engine) {
+  } else if (next === "drive" && network) {
     map.resize();
     if (selection.from && selection.to && result) {
       drive.start(result, driveStart ?? {});
@@ -510,7 +586,9 @@ function intro(): HTMLElement {
     <p>Choose an origin and a destination: type a station name above, or click an operational point on the map.</p>
     <p>The route is computed on the RINF micro topology (track level). The routebook lists what you meet along the way: lines, speed, gradient, tunnels, signals, switches and km posts.</p>
 `;
-  const examples = examplesFor(DATASET, CONFIG.examples);
+  // the examples of the chosen dataset, or of every dataset on offer that has some
+  const ids = FILTER ? [FILTER] : DATASETS.map((d) => d.id);
+  const examples = ids.flatMap((id) => examplesFor(id, CONFIG.examples).map((e) => ({ ...e, dataset: id })));
   if (examples.length) {
     const p = document.createElement("p");
     p.className = "muted";
@@ -518,7 +596,7 @@ function intro(): HTMLElement {
     examples.forEach((e, i) => {
       if (i) p.append(" · ");
       const a = document.createElement("a");
-      const q = new URLSearchParams({ ...(DATASETS.length > 1 ? { dataset: DATASET } : {}), from: e.from, to: e.to });
+      const q = new URLSearchParams({ ...(DATASETS.length > 1 ? { dataset: e.dataset } : {}), from: e.from, to: e.to });
       a.href = `?${q}`;
       a.textContent = e.label ?? `${e.from} → ${e.to}`;
       p.append(a);
@@ -539,7 +617,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
   input.setAttribute("aria-controls", list.id);
   input.setAttribute("aria-autocomplete", "list");
   input.after(list);
-  let options: OperationalPoint[] = [];
+  let options: IndexOp[] = [];
   let active = -1;
 
   const close = () => {
@@ -548,7 +626,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
     input.setAttribute("aria-expanded", "false");
     active = -1;
   };
-  const pick = (op: OperationalPoint) => {
+  const pick = (op: IndexOp) => {
     close();
     setEndpoint(role, op);
     input.blur();
@@ -562,7 +640,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
         const n = document.createElement("span");
         n.textContent = op.name;
         const c = document.createElement("small");
-        c.textContent = op.uopid;
+        c.textContent = FILTER ? op.uopid : `${op.uopid} · ${datasetName(op.dataset)}`;
         li.append(n, c);
         li.addEventListener("mousedown", (e) => {
           e.preventDefault();
@@ -674,41 +752,70 @@ if (CONFIG.privacy?.url) {
   box.hidden = false;
 }
 
-/** Dataset picker in the header, when there is more than one. */
+/** Network picker in the header, when there is more than one dataset: a filter on the map and the search. */
 function buildDatasetPicker(): void {
   const select = $<HTMLSelectElement>("dataset");
   if (DATASETS.length < 2) return;
+  select.replaceChildren();
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = "All networks";
+  all.selected = FILTER === undefined;
+  select.append(all);
   for (const d of DATASETS) {
     const o = document.createElement("option");
     o.value = d.id;
     o.textContent = d.name;
-    o.selected = d.id === DATASET;
+    o.selected = d.id === FILTER;
     select.append(o);
   }
   select.closest<HTMLElement>(".field")!.hidden = false;
-  select.addEventListener("change", () => openDataset(select.value));
+  select.addEventListener("change", () => openDataset(select.value === "all" ? undefined : select.value));
 }
 buildDatasetPicker();
 
-/** Switch the app to another dataset (a reload: the whole bundle changes). */
-function openDataset(id: string): void {
-  const url = new URL(location.href);
-  for (const k of ["from", "to", "at", "play", "country"]) url.searchParams.delete(k);
-  url.searchParams.set("dataset", id);
-  location.assign(url);
+/**
+ * Limit the map and the search to one dataset (undefined: all). With an index this is a filter; a data
+ * folder without one holds a single bundle, so another dataset means a reload.
+ */
+function openDataset(id: string | undefined): void {
+  if (network?.fromBundle && id !== network.fromBundle) {
+    const url = new URL(location.href);
+    for (const k of ["from", "to", "at", "play", "country"]) url.searchParams.delete(k);
+    url.searchParams.set("dataset", id ?? "all");
+    location.assign(url);
+    return;
+  }
+  FILTER = id;
+  $<HTMLSelectElement>("dataset").value = id ?? "all";
+  applyFilter();
+  if (network) searchIndex = buildSearchIndex(visibleOps(network, FILTER));
+  // a selection outside the filter is dropped
+  for (const role of ["from", "to"] as const) {
+    const op = selection[role];
+    if (op && FILTER && op.dataset !== FILTER) setEndpoint(role, undefined);
+  }
+  buildDatasetsButton();
+  if (network && !(selection.from && selection.to)) fitNetwork();
+  update();
 }
 
 /** The Datasets button: which RINF publication the shown network comes from, and how many datasets are on offer. */
 function buildDatasetsButton(): void {
   const btn = $<HTMLButtonElement>("datasets-btn");
-  const current = CATALOGUE.datasets.find((d) => d.id === DATASET);
+  const currentId = FILTER ?? result?.dataset;
+  const current = currentId ? CATALOGUE.datasets.find((d) => d.id === currentId) : undefined;
   const summary = datasetsSummary(CATALOGUE.datasets);
   if (!current && !summary.label) return;
   btn.replaceChildren();
   if (current) {
     btn.append(Object.assign(document.createElement("b"), { textContent: current.name }));
     btn.append(` RINF ${current.publishedAt ? fmtDate(current.publishedAt) : current.fetchedAt ? `fetched ${fmtDate(current.fetchedAt)}` : ""}`.trimEnd());
-  } else btn.append("Datasets");
+  } else {
+    btn.append(Object.assign(document.createElement("b"), { textContent: "All networks" }));
+    const latest = CATALOGUE.datasets.map((d) => d.publishedAt).filter((d): d is string => !!d).sort().at(-1);
+    if (latest) btn.append(` RINF up to ${fmtDate(latest)}`);
+  }
   if (summary.label && CATALOGUE.datasets.length > 1) {
     const badge = document.createElement("span");
     badge.className = `badge${summary.problems ? " warn" : summary.updating ? " updating" : ""}`;
@@ -717,49 +824,76 @@ function buildDatasetsButton(): void {
     btn.append(" ", badge);
   }
   btn.hidden = false;
-  btn.addEventListener("click", () => openDatasetsDialog(CATALOGUE, { current: DATASET, atlasUrl: CONFIG.atlasUrl, onOpen: openDataset }));
-}
-buildDatasetsButton();
-
-/** Show the whole network when the app opens without a route. */
-function fitNetwork(snapshot: Snapshot): void {
-  const pts = snapshot.ops.flatMap((o) => (o.lon !== undefined && o.lat !== undefined ? [[o.lon, o.lat] as LngLat] : []));
-  const b = bounds(pts);
-  if (b) map.fitBounds(b, { padding: 30, duration: 0, maxZoom: 9 });
+  btn.onclick = () => openDatasetsDialog(CATALOGUE, { ...(currentId ? { current: currentId } : {}), atlasUrl: CONFIG.atlasUrl, onOpen: openDataset });
 }
 
-setState("loading", "Loading RINF snapshot…");
-const snapshotPromise = loadBundle(`${BASE}${DATASET}`);
+/**
+ * The footer and the print: which RINF publication the route (or the chosen dataset) comes from, or,
+ * with every network on the map, how many datasets there are and how current they are.
+ */
+function updateProvenance(dataset: string | undefined = FILTER): void {
+  const listed = dataset ? CATALOGUE.datasets.find((d) => d.id === dataset) : undefined;
+  const loaded = dataset ? engines.get(dataset)?.bundle.snapshot.meta : undefined;
+  if (dataset && (listed || loaded)) {
+    $("meta").textContent = provenanceText({
+      name: listed?.name ?? loaded?.name ?? loaded?.country ?? datasetName(dataset),
+      ...(listed?.graphs ? { graphs: listed.graphs } : loaded?.provenance ? { graphs: loaded.provenance } : {}),
+      ...(listed?.publishedAt ? { publishedAt: listed.publishedAt } : {}),
+      ...(listed?.fetchedAt ?? loaded?.fetchedAt ? { fetchedAt: (listed?.fetchedAt ?? loaded?.fetchedAt)! } : {}),
+      ...(listed?.status ? { status: listed.status } : {}),
+      ...(listed?.latest ? { latest: listed.latest } : {}),
+    });
+    $("rinf-credit").textContent = rinfAttribution(credit(listed?.imName ?? loaded?.imName), { html: false });
+  } else {
+    const withData = DATASETS.length;
+    const latest = CATALOGUE.datasets.map((d) => d.publishedAt).filter((d): d is string => !!d).sort().at(-1);
+    $("meta").textContent = `${withData} RINF dataset${withData === 1 ? "" : "s"}${latest ? `, ERA publications up to ${fmtDate(latest)}` : ""}${CATALOGUE.checkedAt ? `, checked ${fmtDate(CATALOGUE.checkedAt, true)}` : ""}`;
+    $("rinf-credit").textContent = rinfAttribution(credit(network ? imNamesOf(network) : undefined), { html: false });
+  }
+}
+
+/** Show the whole network (the chosen dataset, or all of them) when there is no route. */
+function fitNetwork(): void {
+  const b = network && opsBounds(visibleOps(network, FILTER));
+  if (!b) return;
+  map.resize(); // the header may have changed height since the map was created (banner, picker)
+  map.fitBounds(b, { padding: 30, duration: 0, maxZoom: 9 });
+}
+
+setState("loading", "Loading the RINF network…");
 const stylePromise = new Promise<void>((resolve) => {
   if (map.isStyleLoaded()) resolve();
   else map.once("style.load", () => resolve());
 });
 
-Promise.all([snapshotPromise, stylePromise])
-  .then(([{ snapshot, switches }]) => {
-    engine = new RouteEngine(snapshot, switches ? { switches } : {});
-    for (const op of snapshot.ops) opsById.set(op.id, op);
-    searchIndex = buildSearchIndex(snapshot.ops);
-    addLayers(snapshot);
-    drive.setNetwork(snapshot.geometry ?? {});
-    const listed = CATALOGUE.datasets.find((d) => d.id === DATASET);
-    $("meta").textContent = provenanceText({
-      name: snapshot.meta.name ?? snapshot.meta.country,
-      ...(snapshot.meta.provenance ? { graphs: snapshot.meta.provenance } : {}),
-      ...(listed?.publishedAt ? { publishedAt: listed.publishedAt } : {}),
-      fetchedAt: snapshot.meta.fetchedAt,
-      ...(listed?.status ? { status: listed.status } : {}),
-    });
-    $("rinf-credit").textContent = rinfAttribution(snapshot.meta, { html: false });
-    const find = (code: string | null) => (code ? snapshot.ops.find((o) => o.uopid.toLowerCase() === code.toLowerCase()) : undefined);
-    const from = find(params.get("from"));
-    const to = find(params.get("to"));
+/** The network index, or, for a data folder without one, the one bundle it holds (the old single-dataset mode). */
+async function loadIndexOrBundle(): Promise<Network> {
+  const indexed = await loadNetwork(BASE);
+  if (indexed && indexed.ops.length) return indexed;
+  const id = pickDataset(DATASETS, FILTER ?? params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
+  const bundle = await loadBundle(`${BASE}${id}`);
+  engines.set(id, { engine: new RouteEngine(bundle.snapshot, bundle.switches ? { switches: bundle.switches } : {}), bundle });
+  FILTER = id;
+  return networkFromBundle(id, bundle.snapshot);
+}
+
+Promise.all([loadIndexOrBundle(), stylePromise])
+  .then(([net]) => {
+    network = net;
+    if (FILTER && !net.datasets[FILTER] && !net.fromBundle) FILTER = undefined;
+    if (net.fromBundle) $<HTMLSelectElement>("dataset").value = net.fromBundle;
+    searchIndex = buildSearchIndex(visibleOps(net, FILTER));
+    addLayers(net);
+    buildDatasetsButton();
+    updateProvenance();
+    const from = findByCode(net, params.get("from"), FILTER);
+    const to = findByCode(net, params.get("to"), from?.dataset ?? FILTER);
     if (from) selection.from = from;
     if (to) selection.to = to;
     fromInput.value = from?.name ?? "";
     toInput.value = to?.name ?? "";
     setState("ready");
-    if (!from || !to) fitNetwork(snapshot);
+    if (!from || !to) fitNetwork();
     setView(view);
     update();
   })

@@ -38,6 +38,8 @@ Commands:
                             including the switch classification for the schematic view
   index                     Rewrite <data>/web/datasets.json (the datasets the web app offers, with
                             what ERA published for each of them and the outcome of the last fetch)
+                            and the network index <data>/web/index/ (all OPs and lines, for the map
+                            and the search across datasets)
   sync                      Keep the data current: compare what ERA publishes with the catalogue and
                             fetch only the datasets that are new, changed or failed last time, then
                             sleep and check again (--once for a single pass). The server runs this
