@@ -5,7 +5,8 @@
 # platform and copied into the image of every target platform.
 FROM --platform=$BUILDPLATFORM node:25-alpine AS build
 WORKDIR /app
-RUN corepack enable
+# Node 25 images no longer ship corepack: install it, then it provides the pnpm version from package.json
+RUN npm install -g corepack && corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/cli/package.json apps/cli/
 COPY apps/web/package.json apps/web/
