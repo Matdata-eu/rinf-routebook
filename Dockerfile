@@ -3,7 +3,7 @@
 # Routebook: web app + RINF data fetcher + server, in one image.
 # The output is JavaScript and WebAssembly only, so it is built once on the build
 # platform and copied into the image of every target platform.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS build
+FROM --platform=$BUILDPLATFORM node:25-alpine AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -20,7 +20,7 @@ RUN pnpm build \
  && CI=true pnpm install --prod --frozen-lockfile --offline \
  && chmod -R a+rX /app
 
-FROM node:22-alpine
+FROM node:25-alpine
 LABEL org.opencontainers.image.title="Routebook" \
       org.opencontainers.image.description="Open-source railway routebook built on public ERA RINF data" \
       org.opencontainers.image.source="https://github.com/Matdata-eu/rinf-routebook" \
