@@ -348,7 +348,7 @@ export interface TrainStyle {
   nose: string;
 }
 
-export const DEFAULT_TRAIN_STYLE: TrainStyle = { cars: 4, carLength: 24, gap: 1.2, width: 4.2, body: "#e9edf1", windows: "#22313f", nose: "#d35400" };
+export const DEFAULT_TRAIN_STYLE: TrainStyle = { cars: 4, carLength: 24, gap: 1.2, width: 4.2, body: "#e9edf1", windows: "#22313f", nose: "#0563bb" };
 
 /**
  * Footprints of a little train whose front is at `d`, following the curves

@@ -24,6 +24,7 @@ Routebook does not ship RINF data: every deployment fetches it from the public e
 | Project | Used for | Licence |
 |---|---|---|
 | [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js) | map, route and Drive view | BSD-3-Clause |
+| [Barlow](https://github.com/jpt/barlow) by Jeremy Tribby, via [Fontsource](https://fontsource.org/) | the interface typeface (MatData design system), bundled with the app | SIL Open Font License 1.1 |
 | [HiGHS](https://highs.dev/) via [highs-js](https://github.com/lovasoa/highs-js) | solving the schematic layout (WebAssembly) | MIT |
 | [railplot](https://github.com/luteberget/railplot) by Bjørnar Luteberget | the schematic layout model (levels, edge order, port shapes) that `packages/schematic` ports to a mixed-integer program | MIT |
 | [Vite](https://vite.dev/) | web build and dev server | MIT |

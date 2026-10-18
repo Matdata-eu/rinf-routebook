@@ -62,7 +62,7 @@ export function gradientColor(g: number | undefined): string {
   if (g === undefined) return "transparent";
   const t = Math.min(1, Math.abs(g) / 25);
   if (Math.abs(g) < 0.5) return "hsl(0 0% 90%)";
-  return g > 0 ? `hsl(8 75% ${92 - t * 40}%)` : `hsl(200 70% ${92 - t * 40}%)`;
+  return g > 0 ? `hsl(40 90% ${92 - t * 40}%)` : `hsl(200 70% ${92 - t * 40}%)`;
 }
 
 export const KIND_LABELS: Record<string, string> = {

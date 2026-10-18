@@ -137,7 +137,7 @@ export function loadPrivacy(privacy, baseDir = process.cwd(), log = console.warn
 }
 
 /** A whole HTML page for the privacy statement (a full document is served as it is). */
-export function privacyPage(privacy, title = "Routebook") {
+export function privacyPage(privacy, title = "RouteBook") {
   if (/<html[\s>]/i.test(privacy.html)) return privacy.html;
   return `<!doctype html>
 <html lang="en">

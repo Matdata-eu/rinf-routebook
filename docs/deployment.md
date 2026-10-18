@@ -148,7 +148,7 @@ Other top-level fields:
 
 | Field | Meaning |
 |---|---|
-| `title` | App title in the header and the browser tab. |
+| `title` | App title in the header and the browser tab. A one-word camel-case name is drawn as a MatData wordmark with its last part in blue (`RouteBook`). |
 | `defaultDataset` | Dataset the map and the search are narrowed to when the URL has none, e.g. `"nor"`; without it the app opens on every dataset. |
 | `defaultBasemap` | Background opened when the URL has none, e.g. `"ortho"`. |
 | `builtinBasemaps` | `true` (default), `false` to hide Streets and Satellite, or a list such as `["map"]`. |
@@ -203,7 +203,7 @@ Environment variables of the server and the container:
 | `ROUTEBOOK_SYNC_MINUTES` | `60` in the image, `0` otherwise | How often `routebook sync` compares the data with ERA and fetches what changed; `0` switches it off (the container then fetches the missing datasets once on start). |
 | `ROUTEBOOK_REFRESH` | `0` | `1` fetches every dataset again on start. |
 | `ROUTEBOOK_DEFAULT_DATASET` | first dataset | Same as `defaultDataset`. |
-| `ROUTEBOOK_TITLE` | `Routebook` | Same as `title`. |
+| `ROUTEBOOK_TITLE` | `RouteBook` | Same as `title`. |
 | `ROUTEBOOK_DEFAULT_BASEMAP` | first background | Same as `defaultBasemap`. |
 | `ESRI_API_KEY` | none | Adds the proxied Esri World Imagery background. |
 | `ROUTEBOOK_PRIVACY_URL`, `ROUTEBOOK_PRIVACY_FILE` | none | Privacy statement link or file, see [above](#privacy-statement). |
