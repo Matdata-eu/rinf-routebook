@@ -205,6 +205,8 @@ export interface DatasetEntry {
   counts?: Record<string, number>;
   endpoint?: string;
   ontologyVersion?: string;
+  /** FETCH_VERSION of the code that fetched the bundle; absent: 1. */
+  fetchVersion?: number;
 }
 
 export type DatasetStatus = "loaded" | "stale" | "pending" | "failed" | "removed";
@@ -234,6 +236,7 @@ export function datasetEntry(id: string, meta: SnapshotMeta): DatasetEntry {
     ...(meta.counts ? { counts: meta.counts } : {}),
     ...(meta.endpoint ? { endpoint: meta.endpoint } : {}),
     ...(meta.ontologyVersion ? { ontologyVersion: meta.ontologyVersion } : {}),
+    ...(meta.fetchVersion ? { fetchVersion: meta.fetchVersion } : {}),
   };
 }
 

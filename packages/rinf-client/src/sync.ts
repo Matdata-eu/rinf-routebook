@@ -7,9 +7,11 @@ import { readdir, rm } from "node:fs/promises";
 import { datasetFolder, readCatalogue, writeDatasetIndex, type DatasetCatalogue, type DatasetEntry } from "./cache.js";
 import { graphsOf, type CountryGraph } from "./countries.js";
 import { datasetsApiFor, fingerprintsDiffer, graphProvenance, publishedDatasets, type EraOptions, type PublishedDataset } from "./era.js";
+import { FETCH_VERSION } from "./snapshot.js";
 import type { GraphProvenance } from "./types.js";
 
-export type SyncReason = "new" | "changed" | "failed" | "forced";
+/** Why a dataset is fetched; outdated: fetched by an older version of the queries (FETCH_VERSION). */
+export type SyncReason = "new" | "changed" | "failed" | "outdated" | "forced";
 
 export interface SyncItem {
   dataset: CountryGraph;
@@ -82,6 +84,7 @@ function reasonFor(entry: DatasetEntry | undefined, latest: GraphProvenance[], f
   if (entry?.status === "failed") return "failed";
   if (!entry || !entry.fetchedAt || entry.status === "pending") return "new";
   if (fingerprintsDiffer(entry.graphs, latest)) return "changed";
+  if ((entry.fetchVersion ?? 1) < FETCH_VERSION) return "outdated";
   return undefined;
 }
 
@@ -126,7 +129,7 @@ export async function runSync(opts: RunSyncOptions): Promise<SyncResult> {
   const summary = (items: SyncItem[], reason: SyncReason) => items.filter((i) => i.reason === reason).map((i) => i.id);
   log(
     `${checkedAt}: ${opts.datasets.length} datasets on ${opts.endpoint}; ${plan.current.length} current, ${plan.fetch.length} to fetch` +
-      (plan.fetch.length ? ` (new: ${summary(plan.fetch, "new").join(", ") || "-"}; changed: ${summary(plan.fetch, "changed").join(", ") || "-"}; failed before: ${summary(plan.fetch, "failed").join(", ") || "-"}${opts.force ? `; forced: ${summary(plan.fetch, "forced").length}` : ""})` : "") +
+      (plan.fetch.length ? ` (new: ${summary(plan.fetch, "new").join(", ") || "-"}; changed: ${summary(plan.fetch, "changed").join(", ") || "-"}; failed before: ${summary(plan.fetch, "failed").join(", ") || "-"}; outdated: ${summary(plan.fetch, "outdated").length}${opts.force ? `; forced: ${summary(plan.fetch, "forced").length}` : ""})` : "") +
       (plan.removed.length ? `; no longer on ERA: ${plan.removed.join(", ")}` : ""),
   );
   const result: SyncResult = { checkedAt, plan, fetched: [], failed: [], peakMemoryMb: 0 };

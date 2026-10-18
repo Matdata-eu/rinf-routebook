@@ -135,6 +135,11 @@ export interface SnapshotMeta {
   checkedAt?: string;
   /** ERA ontology version the data was published with, when the ontology graph says so. */
   ontologyVersion?: string;
+  /**
+   * Version of the queries and the parsing the data was fetched with (FETCH_VERSION); absent: 1.
+   * The sync fetches a dataset again when it is older than the running code.
+   */
+  fetchVersion?: number;
 }
 
 /** One named graph of a dataset as ERA publishes it: the IM's upload behind the data. */
