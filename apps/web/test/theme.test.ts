@@ -21,12 +21,11 @@ describe("theme", () => {
     expect(paint).toMatchObject({ "raster-saturation": -0.85, "raster-opacity": 0.75, "raster-brightness-min": 0, "raster-brightness-max": 1 });
   });
 
-  it("turns a street map dark and only dims imagery", () => {
-    const streets = themedRasterPaint({ "raster-saturation": -0.85 }, false, "dark");
-    expect(streets["raster-brightness-min"]).toBeGreaterThan(streets["raster-brightness-max"] as number);
-    expect(streets["raster-hue-rotate"]).toBe(180);
+  it("dims a street map as RINF Atlas does, and only dims imagery", () => {
+    const streets = themedRasterPaint({ "raster-saturation": -0.35 }, false, "dark");
+    expect(streets).toMatchObject({ "raster-brightness-max": 0.72, "raster-saturation": -0.5, "raster-contrast": 0.1 });
     const aerial = themedRasterPaint({ "raster-brightness-max": 0.85 }, true, "dark");
-    expect(aerial).toMatchObject({ "raster-brightness-min": 0, "raster-hue-rotate": 0 });
+    expect(aerial).toMatchObject({ "raster-brightness-min": 0, "raster-contrast": 0 });
     expect(aerial["raster-brightness-max"]).toBeLessThan(0.85);
   });
 

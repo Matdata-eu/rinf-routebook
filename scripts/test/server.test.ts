@@ -218,7 +218,8 @@ describe("static build", () => {
     const cfg = loadConfig({ cwd: join(__dirname, "..", ".."), log: quiet, env: { ROUTEBOOK_CONFIG_FILE: "deploy/matdata/config.json", ESRI_API_KEY: "k" } });
     expect(cfg.privacy.html).toMatch(/Matdata/);
     expect(cfg.privacy.html).toMatch(/routebook\.matdata\.eu/);
-    expect(cfg.defaultBasemap).toBe("aerial");
+    // the street map opens first; the aerial view is one click away in Map layers
+    expect(cfg.defaultBasemap).toBeUndefined();
     expect(cfg.basemaps.map((b: { id: string }) => b.id)).toEqual(["aerial"]);
     expect((cfg as { disclaimer?: unknown }).disclaimer).toEqual({ publisher: "Matdata" });
   });

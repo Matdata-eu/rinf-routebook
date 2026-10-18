@@ -119,7 +119,7 @@ export function opsGeoJson(network: Network) {
       .map((o) => ({
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [o.lon!, o.lat!] },
-        properties: { key: opKey(o), dataset: o.dataset, name: o.name, uopid: o.uopid, station: o.type === "10" ? 1 : 0 },
+        properties: { key: opKey(o), dataset: o.dataset, name: o.name, uopid: o.uopid, station: o.type === "10" ? 1 : 0, routable: o.routable ? 1 : 0 },
       })),
   };
 }

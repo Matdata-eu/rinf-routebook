@@ -92,7 +92,7 @@ RINF does not contain everything a professional routebook needs. The app lists t
 
 ### Background maps
 
-The app ships two backgrounds that need no key and allow commercial use: **Streets** (OpenStreetMap) and **Satellite** (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0). Aerial imagery sharp enough to see tracks and platforms is not free to redistribute, so deployers add their own: Esri World Imagery with an API key, a national orthophoto service, a company WMS or WMTS. Keys are kept on the server by its tile proxy. See [docs/deployment.md#map-layers](docs/deployment.md#map-layers). The code stays MIT either way; the imagery terms are between the deployer and the provider.
+The app has the same map layers as RINF Atlas, none of which needs a key: **Streets** (OpenStreetMap) and the **OpenRailwayMap** overlay; a coarse **Satellite** background (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0) can be switched on in the configuration. Aerial imagery sharp enough to see tracks and platforms is not free to redistribute, so deployers add their own: Esri World Imagery with an API key, a national orthophoto service, a company WMS or WMTS. Keys are kept on the server by its tile proxy. See [docs/deployment.md#map-layers](docs/deployment.md#map-layers). The code stays MIT either way; the imagery terms are between the deployer and the provider.
 
 ## Disclaimer
 
@@ -145,7 +145,7 @@ Routebook is created and maintained by **Mathias Vanden Auweele** ([Matdata](htt
 It stands on the work of others; the full list with licences is in [CREDITS.md](CREDITS.md):
 
 - **RINF data** © [European Union Agency for Railways](https://www.era.europa.eu/), published in the ERA knowledge graph, with the data provided by each infrastructure manager (for Norway: **Bane NOR**).
-- **Map data and imagery:** © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors; [EOxCloudless 2016](https://cloudless.eox.at) by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016 & 2017).
+- **Map data and imagery:** © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors; [OpenRailwayMap](https://www.openrailwaymap.org/) (CC-BY-SA 2.0); [EOxCloudless 2016](https://cloudless.eox.at) by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016 & 2017).
 - **Software:** [MapLibre GL JS](https://maplibre.org/), [HiGHS](https://highs.dev/) through [highs-js](https://github.com/lovasoa/highs-js), the schematic layout model of [railplot](https://github.com/luteberget/railplot) by Bjørnar Luteberget, [Vite](https://vite.dev/), [TypeScript](https://www.typescriptlang.org/) and [Vitest](https://vitest.dev/).
 
 If you use Routebook in your work, a link back to this repository is appreciated.

@@ -19,10 +19,11 @@ import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
 import { DriveView } from "./drive-view.js";
 import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
-import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, rinfAttribution, examplesFor } from "./datasets.js";
+import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, readiness, rinfAttribution, examplesFor } from "./datasets.js";
 import { openDatasetsDialog } from "./datasets-dialog.js";
 import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
 import { renderBrand } from "./brand.js";
+import { openHelp } from "./help.js";
 import { currentTheme, followSystemTheme, mapColors, onThemeChange, setTheme, themedRasterPaint } from "./theme.js";
 
 const params = new URLSearchParams(location.search);
@@ -84,7 +85,9 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 if (import.meta.env.DEV) Object.assign(window, { routebookMap: map });
-map.addControl(basemapSwitch(), "top-right");
+/** Marks the Map layers button while an overlay is on (set by layersControl). */
+let markLayersOn = (): void => undefined;
+map.addControl(layersControl(), "top-right");
 
 /** Colour of the network lines: MatData ink-muted on a map, near white on imagery. */
 const networkColor = (b: Basemap) => (b.aerial ? mapColors().networkOnImagery : mapColors().network);
@@ -98,14 +101,19 @@ function paintMap(): void {
   set("sols", "line-color", networkColor(basemap));
   set("route-casing", "line-color", c.casing);
   set("route", "line-color", c.route);
-  set("ops", "circle-color", ["case", ["==", ["get", "station"], 1], c.station, c.op]);
+  set("ops", "circle-color", opColor(c));
   set("ops", "circle-stroke-color", c.halo);
-  set("op-labels", "text-color", c.label);
+  set("op-labels", "text-color", ["case", ["==", ["get", "routable"], 1], c.label, c.unroutable]);
   set("op-labels", "text-halo-color", c.halo);
   set("endpoints", "circle-color", ["match", ["get", "role"], "from", c.from, c.to]);
   set("endpoints", "circle-stroke-color", c.halo);
   set("selected", "circle-color", c.selected);
   set("selected", "circle-stroke-color", c.selectedRing);
+}
+
+/** OP dots: stations darker than other OPs; grey and faint where RINF gives no position on the track network (no route can start or end there). */
+function opColor(c: ReturnType<typeof mapColors>): maplibregl.ExpressionSpecification {
+  return ["case", ["!=", ["get", "routable"], 1], c.unroutable, ["==", ["get", "station"], 1], c.station, c.op];
 }
 
 /** Swap the background imagery in place, under the railway layers. */
@@ -119,44 +127,94 @@ function setBasemap(next: Basemap): void {
   const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
   map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(next.paint, next.aerial, currentTheme()) }, above);
   if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", networkColor(next));
-  document.querySelectorAll<HTMLButtonElement>(".basemap-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === next.id)));
+  document.querySelectorAll<HTMLInputElement>(".layers-menu input[name=basemap]").forEach((r) => (r.checked = r.value === next.id));
   syncUrl();
 }
 
-function basemapSwitch(): maplibregl.IControl {
+/** One option of the Map layers menu: a radio (background) or a checkbox (overlay) with its label and a line under it. */
+function layerOption(type: "radio" | "checkbox", value: string, label: string, description: string | undefined, checked: boolean, onChange: (on: boolean) => void): HTMLLabelElement {
+  const row = document.createElement("label");
+  row.className = "layer-opt";
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = value;
+  if (type === "radio") input.name = "basemap";
+  input.checked = checked;
+  input.addEventListener("change", () => onChange(input.checked));
+  const text = document.createElement("span");
+  const b = document.createElement("b");
+  b.textContent = label;
+  text.append(b);
+  if (description) {
+    const small = document.createElement("small");
+    small.textContent = description;
+    text.append(small);
+  }
+  row.append(input, text);
+  return row;
+}
+
+/**
+ * The Map layers button and its menu, as in RINF Atlas: the backgrounds on offer (when there is
+ * a choice) and the overlays, OpenRailwayMap first. A dot on the button while an overlay is on.
+ */
+function layersControl(): maplibregl.IControl {
   const box = document.createElement("div");
-  box.className = "maplibregl-ctrl basemap-switch";
-  box.setAttribute("role", "group");
-  box.setAttribute("aria-label", "Background map");
-  for (const b of BASEMAPS) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = b.label;
-    btn.dataset.id = b.id;
-    btn.setAttribute("aria-pressed", String(b.id === basemap.id));
-    btn.addEventListener("click", () => setBasemap(b));
-    box.append(btn);
+  box.className = "maplibregl-ctrl layers-ctrl";
+  const group = document.createElement("div");
+  group.className = "maplibregl-ctrl-group";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "layers-btn";
+  btn.title = "Map layers";
+  btn.setAttribute("aria-label", "Map layers");
+  btn.setAttribute("aria-haspopup", "true");
+  btn.setAttribute("aria-expanded", "false");
+  btn.setAttribute("aria-controls", "layers-menu");
+  btn.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 1.8 14.5 5 8 8.2 1.5 5Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="m1.5 8 6.5 3.2L14.5 8M1.5 11l6.5 3.2 6.5-3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  group.append(btn);
+  const menu = document.createElement("div");
+  menu.id = "layers-menu";
+  menu.className = "layers-menu";
+  menu.setAttribute("role", "group");
+  menu.setAttribute("aria-label", "Map layers");
+  menu.hidden = true;
+  const title = (text: string) => Object.assign(document.createElement("h2"), { className: "layers-title", textContent: text });
+  if (BASEMAPS.length > 1) {
+    menu.append(title("Background"));
+    for (const b of BASEMAPS) menu.append(layerOption("radio", b.id, b.label, undefined, b.id === basemap.id, (on) => on && setBasemap(b)));
   }
-  for (const o of OVERLAYS) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "overlay";
-    btn.textContent = o.label;
-    btn.title = `Show or hide ${o.label}`;
-    btn.dataset.overlay = o.id;
-    btn.setAttribute("aria-pressed", String(shownOverlays.has(o.id)));
-    btn.addEventListener("click", () => toggleOverlay(o.id, btn));
-    box.append(btn);
+  if (OVERLAYS.length) {
+    menu.append(title(BASEMAPS.length > 1 ? "Overlays" : "Map layers"));
+    for (const o of OVERLAYS) menu.append(layerOption("checkbox", o.id, o.label, o.description, shownOverlays.has(o.id), (on) => setOverlay(o.id, on)));
   }
+  box.append(group, menu);
+  const setOpen = (open: boolean) => {
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.addEventListener("click", () => setOpen(menu.hidden));
+  document.addEventListener("pointerdown", (e) => {
+    if (!menu.hidden && !box.contains(e.target as Node)) setOpen(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !menu.hidden) {
+      setOpen(false);
+      btn.focus();
+    }
+  });
+  markLayersOn = () => btn.classList.toggle("has-on", shownOverlays.size > 0);
+  markLayersOn();
+  if (!BASEMAPS.length && !OVERLAYS.length) box.hidden = true;
   return { onAdd: () => box, onRemove: () => box.remove() };
 }
 
-function toggleOverlay(id: string, btn: HTMLButtonElement): void {
-  const on = !shownOverlays.has(id);
+
+function setOverlay(id: string, on: boolean): void {
   if (on) shownOverlays.add(id);
   else shownOverlays.delete(id);
-  map.setLayoutProperty(`overlay-${id}`, "visibility", on ? "visible" : "none");
-  btn.setAttribute("aria-pressed", String(on));
+  if (map.getLayer(`overlay-${id}`)) map.setLayoutProperty(`overlay-${id}`, "visibility", on ? "visible" : "none");
+  markLayersOn();
   syncUrl();
 }
 
@@ -213,11 +271,15 @@ function addLayers(net: Network): void {
     type: "circle",
     source: "ops",
     ...withFilter(datasetFilter()),
+    // OPs a route can use are drawn over those it cannot
+    layout: { "circle-sort-key": ["get", "routable"] },
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, ["case", ["==", ["get", "station"], 1], 2.5, 1.5], 11, ["case", ["==", ["get", "station"], 1], 7, 4]],
-      "circle-color": ["case", ["==", ["get", "station"], 1], c.station, c.op],
+      "circle-color": opColor(c),
+      "circle-opacity": ["case", ["==", ["get", "routable"], 1], 1, 0.55],
       "circle-stroke-color": c.halo,
       "circle-stroke-width": 1,
+      "circle-stroke-opacity": ["case", ["==", ["get", "routable"], 1], 1, 0.55],
     },
   });
   map.addLayer({
@@ -227,18 +289,80 @@ function addLayers(net: Network): void {
     minzoom: 8,
     ...withFilter(datasetFilter(["==", ["get", "station"], 1])),
     layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
-    paint: { "text-color": c.label, "text-halo-color": c.halo, "text-halo-width": 1.5 },
+    paint: { "text-color": ["case", ["==", ["get", "routable"], 1], c.label, c.unroutable], "text-halo-color": c.halo, "text-halo-width": 1.5 },
   });
   map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", c.from, c.to], "circle-stroke-color": c.halo, "circle-stroke-width": 3 } });
   map.addLayer({ id: "selected", type: "circle", source: "selected", paint: { "circle-radius": 10, "circle-color": c.selected, "circle-stroke-color": c.selectedRing, "circle-stroke-width": 3 } });
 
-  map.on("mouseenter", "ops", () => (map.getCanvas().style.cursor = "pointer"));
-  map.on("mouseleave", "ops", () => (map.getCanvas().style.cursor = ""));
-  map.on("click", "ops", (e) => {
-    const key = e.features?.[0]?.properties?.key as string | undefined;
-    const op = key ? network?.byKey.get(key) : undefined;
-    if (op) openOpPopup(op, e.lngLat);
+  // hover: the OP's name and what a click does; click: origin, then destination, then a new origin
+  const hover = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, className: "op-hover", maxWidth: "300px" });
+  const opAt = (e: maplibregl.MapLayerMouseEvent) => {
+    // a routable OP wins over an unroutable one drawn at the same spot
+    const keys = (e.features ?? []).map((f) => f.properties?.key as string | undefined);
+    const ops = keys.map((k) => (k ? network?.byKey.get(k) : undefined)).filter((o): o is IndexOp => !!o);
+    return ops.find((o) => o.routable) ?? ops[0];
+  };
+  map.on("mousemove", "ops", (e) => {
+    const op = opAt(e);
+    if (!op || document.body.classList.contains("driving")) return;
+    map.getCanvas().style.cursor = op.routable ? "pointer" : "not-allowed";
+    hover.setLngLat([op.lon!, op.lat!]).setDOMContent(opHoverContent(op)).addTo(map);
   });
+  map.on("mouseleave", "ops", () => {
+    map.getCanvas().style.cursor = "";
+    hover.remove();
+  });
+  map.on("click", "ops", (e) => {
+    const op = opAt(e);
+    if (!op || document.body.classList.contains("driving")) return;
+    pickOnMap(op);
+    hover.setDOMContent(opHoverContent(op));
+  });
+}
+
+/** What a click on an OP does now: start a new route from it, or end the route there. */
+function nextRole(): "from" | "to" {
+  return selection.from && !selection.to ? "to" : "from";
+}
+
+function opHoverContent(op: IndexOp): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "op-popup";
+  const name = document.createElement("strong");
+  name.textContent = op.name;
+  const code = document.createElement("span");
+  code.textContent = ` ${op.uopid}${FILTER ? "" : ` · ${datasetName(op.dataset)}`}`;
+  const hint = document.createElement("small");
+  if (!op.routable) {
+    hint.className = "warn";
+    hint.textContent = "No position on the track network in RINF: a route cannot start or end here.";
+  } else if (selection.from?.dataset === op.dataset && selection.from.uopid === op.uopid && !selection.to) {
+    hint.textContent = "Origin. Click the destination next.";
+  } else {
+    hint.textContent = nextRole() === "to" ? "Click: route to here" : selection.from ? "Click: new route from here" : "Click: route from here";
+  }
+  box.append(name, code, hint);
+  return box;
+}
+
+/**
+ * A click on an OP: the first one is the origin, the next the destination; with a route on the
+ * map, a click starts a new one from there. OPs without a position on the tracks are refused.
+ */
+function pickOnMap(op: IndexOp): void {
+  if (!op.routable) {
+    setState(result ? "routed" : "ready", `${op.name} has no position on the track network in RINF, so a route cannot start or end there.`);
+    status.classList.add("error");
+    return;
+  }
+  if (nextRole() === "to") {
+    if (selection.from?.uopid === op.uopid && selection.from.dataset === op.dataset) return;
+    setEndpoint("to", op);
+    return;
+  }
+  delete selection.to;
+  toInput.value = "";
+  setEndpoint("from", op);
 }
 
 /** Argument of rinfAttribution for an optional IM name. */
@@ -252,30 +376,6 @@ function imNamesOf(net: Network): string | undefined {
   const names = [...new Set(ids.map((id) => net.datasets[id]?.imName ?? CATALOGUE.datasets.find((d) => d.id === id)?.imName).filter((n): n is string => !!n))];
   if (!names.length) return undefined;
   return names.length <= 3 ? names.join(", ") : `${names.length} infrastructure managers`;
-}
-
-function openOpPopup(op: IndexOp, at: maplibregl.LngLatLike): void {
-  const box = document.createElement("div");
-  box.className = "op-popup";
-  const name = document.createElement("strong");
-  name.textContent = op.name;
-  const code = document.createElement("span");
-  code.textContent = ` ${op.uopid}${FILTER ? "" : ` · ${datasetName(op.dataset)}`}`;
-  const buttons = document.createElement("div");
-  const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px" });
-  for (const [role, label] of [["from", "Route from here"], ["to", "Route to here"]] as const) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `btn btn-${role}`;
-    b.textContent = label;
-    b.addEventListener("click", () => {
-      popup.remove();
-      setEndpoint(role, op);
-    });
-    buttons.append(b);
-  }
-  box.append(name, code, buttons);
-  popup.setLngLat(at).setDOMContent(box).addTo(map);
 }
 
 // ---------------------------------------------------------------- state
@@ -325,6 +425,12 @@ const hiddenKinds = new Set<string>(
 );
 
 function setEndpoint(role: "from" | "to", op: IndexOp | undefined): void {
+  if (op && !op.routable) {
+    (role === "from" ? fromInput : toInput).value = selection[role]?.name ?? "";
+    setState(document.body.dataset.state === "routed" ? "routed" : "ready", `${op.name} has no position on the track network in RINF, so a route cannot start or end there.`);
+    status.classList.add("error");
+    return;
+  }
   if (op) selection[role] = op;
   else delete selection[role];
   (role === "from" ? fromInput : toInput).value = op ? op.name : "";
@@ -382,7 +488,7 @@ function update(): void {
     drawSchematic();
     if (view === "drive") drive.start(undefined);
     updateProvenance();
-    setState("ready", selection.from || selection.to ? "Pick the other end of the route." : "");
+    setState("ready", selection.from && !selection.to ? "Click the destination on the map, or type it." : selection.to ? "Pick the origin." : "");
     return;
   }
   setState("routing", "Routing…");
@@ -642,9 +748,19 @@ function intro(): HTMLElement {
   const d = document.createElement("div");
   d.className = "intro";
   d.innerHTML = `<h2>RouteBook</h2>
-    <p>Choose an origin and a destination: type a station name above, or click an operational point on the map.</p>
+    <p>Click an operational point on the map for the origin, then another for the destination; the next click starts a new route. Or type a station name above.</p>
+    <p class="muted">Grey points have no position on the track network in RINF, so a route cannot start or end there. The <b>?</b> button explains what RINF must contain for a route.</p>
     <p>The route is computed on the RINF micro topology (track level). The routebook lists what you meet along the way: lines, speed, gradient, tunnels, signals, switches and km posts.</p>
 `;
+  // a dataset Routebook cannot route on: say so before anyone tries
+  const shown = FILTER ? CATALOGUE.datasets.find((x) => x.id === FILTER) : undefined;
+  const ready = shown && readiness(shown, routableCounts()[shown.id]);
+  if (shown && ready && ready.level === "unusable") {
+    const p = document.createElement("p");
+    p.className = "intro-warn";
+    p.textContent = `⚠ No route is possible in ${shown.name}: ${ready.detail ?? ready.label}`;
+    d.append(p);
+  }
   // the examples of the chosen dataset, or of every dataset on offer that has some
   const ids = FILTER ? [FILTER] : DATASETS.map((d) => d.id);
   const examples = ids.flatMap((id) => examplesFor(id, CONFIG.examples).map((e) => ({ ...e, dataset: id })));
@@ -695,11 +811,12 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
       ...options.map((op, i) => {
         const li = document.createElement("li");
         li.setAttribute("role", "option");
-        li.className = i === active ? "active" : "";
+        li.className = `${i === active ? "active" : ""}${op.routable ? "" : " unroutable"}`.trim();
         const n = document.createElement("span");
         n.textContent = op.name;
         const c = document.createElement("small");
-        c.textContent = FILTER ? op.uopid : `${op.uopid} · ${datasetName(op.dataset)}`;
+        c.textContent = `${FILTER ? op.uopid : `${op.uopid} · ${datasetName(op.dataset)}`}${op.routable ? "" : " · not on the track network"}`;
+        if (!op.routable) li.title = "No position on the track network in RINF: a route cannot start or end here";
         li.append(n, c);
         li.addEventListener("mousedown", (e) => {
           e.preventDefault();
@@ -809,6 +926,7 @@ function syncThemeButton(): void {
   themeBtn.title = dark ? "Switch to the light theme" : "Switch to the dark theme";
 }
 themeBtn.addEventListener("click", () => setTheme(currentTheme() === "dark" ? "light" : "dark"));
+$("help-btn").addEventListener("click", () => openHelp({ onDatasets: () => $("datasets-btn").click() }));
 onThemeChange(() => {
   syncThemeButton();
   paintMap();
@@ -825,7 +943,10 @@ if (CONFIG.privacy?.url) {
   box.hidden = false;
 }
 
-/** Network picker in the header, when there is more than one dataset: a filter on the map and the search. */
+/**
+ * Network picker in the header, when there is more than one dataset: a filter on the map and the
+ * search. Built again once the network index is there, which says where no route is possible.
+ */
 function buildDatasetPicker(): void {
   const select = $<HTMLSelectElement>("dataset");
   if (DATASETS.length < 2) return;
@@ -838,12 +959,14 @@ function buildDatasetPicker(): void {
   for (const d of DATASETS) {
     const o = document.createElement("option");
     o.value = d.id;
-    o.textContent = d.name;
+    const r = readiness(d, routableCounts()[d.id]);
+    o.textContent = r.level === "unusable" ? `${d.name} ⚠` : d.name;
+    if (r.detail && r.level !== "ready") o.title = r.detail;
     o.selected = d.id === FILTER;
     select.append(o);
   }
   select.closest<HTMLElement>(".field")!.hidden = false;
-  select.addEventListener("change", () => openDataset(select.value === "all" ? undefined : select.value));
+  select.onchange = () => openDataset(select.value === "all" ? undefined : select.value);
 }
 buildDatasetPicker();
 
@@ -897,7 +1020,37 @@ function buildDatasetsButton(): void {
     btn.append(" ", badge);
   }
   btn.hidden = false;
-  btn.onclick = () => openDatasetsDialog(CATALOGUE, { ...(currentId ? { current: currentId } : {}), ...(network ? { borders: network.borders } : {}), atlasUrl: CONFIG.atlasUrl, onOpen: openDataset });
+  // can Routebook route on the shown dataset, or on how many of them
+  const routable = routableCounts();
+  if (current) {
+    const r = readiness(current, routable[current.id]);
+    if (r.level === "unusable" || r.level === "limited") {
+      const warn = document.createElement("span");
+      warn.className = `badge ${r.level === "unusable" ? "warn" : "updating"}`;
+      warn.textContent = r.level === "unusable" ? "⚠ cannot route" : "few signals";
+      warn.title = r.detail ?? r.label;
+      btn.append(" ", warn);
+    }
+  } else {
+    const unusable = loadable(CATALOGUE.datasets).filter((d) => readiness(d, routable[d.id]).level === "unusable").length;
+    if (unusable) {
+      const warn = document.createElement("span");
+      warn.className = "badge warn";
+      warn.textContent = `⚠ ${unusable} cannot route`;
+      warn.title = `${unusable} dataset${unusable === 1 ? "" : "s"} without what Routebook needs in RINF; see the Routing column`;
+      btn.append(" ", warn);
+    }
+  }
+  btn.onclick = () => openDatasetsDialog(CATALOGUE, { ...(currentId ? { current: currentId } : {}), ...(network ? { borders: network.borders } : {}), routable, atlasUrl: CONFIG.atlasUrl, onOpen: openDataset });
+}
+
+/** Operational points with a position on the track network, per dataset, from the network index. */
+function routableCounts(): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!network) return out;
+  for (const id of Object.keys(network.datasets)) out[id] = 0;
+  for (const op of network.ops) if (op.routable) out[op.dataset] = (out[op.dataset] ?? 0) + 1;
+  return out;
 }
 
 /**
@@ -967,6 +1120,7 @@ Promise.all([loadIndexOrBundle(), stylePromise])
     if (net.fromBundle) $<HTMLSelectElement>("dataset").value = net.fromBundle;
     searchIndex = buildSearchIndex(visibleOps(net, FILTER));
     addLayers(net);
+    buildDatasetPicker();
     buildDatasetsButton();
     updateProvenance();
     const from = findByCode(net, params.get("from"), FILTER);

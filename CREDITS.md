@@ -15,7 +15,8 @@ Routebook does not ship RINF data: every deployment fetches it from the public e
 | Layer | Provider | Terms |
 |---|---|---|
 | Streets | © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, tiles from tile.openstreetmap.org | ODbL data; the [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) applies to the public tile servers. Use your own tile service for heavy production use. |
-| Satellite | [EOxCloudless 2016](https://cloudless.eox.at) by EOX IT Services GmbH, contains modified Copernicus Sentinel data 2016 & 2017 | CC BY 4.0. Only the 2016 mosaic: later years are licensed for non-commercial use only. |
+| OpenRailwayMap overlay | © [OpenRailwayMap](https://www.openrailwaymap.org/) and OpenStreetMap contributors, tiles from tiles.openrailwaymap.org | CC-BY-SA 2.0. Off until a user ticks it in Map layers. |
+| Satellite (opt-in) | [EOxCloudless 2016](https://cloudless.eox.at) by EOX IT Services GmbH, contains modified Copernicus Sentinel data 2016 & 2017 | CC BY 4.0. Only the 2016 mosaic: later years are licensed for non-commercial use only. |
 | Map label fonts | [MapLibre demo tiles](https://github.com/maplibre/demotiles) glyph server | Self-host the glyphs for production (`glyphs` in the configuration). |
 | Your own layers | configured by the deployer | Between the deployer and the provider. |
 

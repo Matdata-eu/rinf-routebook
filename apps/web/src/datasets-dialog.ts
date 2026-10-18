@@ -5,7 +5,7 @@
  * Datasets dialog of RINF Atlas, which links from here.
  */
 import type { NetworkBordersIndex } from "@routebook/rinf-client/network-index";
-import { atlasLink, fmtDate, imNames, latestOf, loadable, type DatasetCatalogue, type DatasetInfo } from "./datasets.js";
+import { atlasLink, fmtDate, imNames, latestOf, loadable, readiness, type DatasetCatalogue, type DatasetInfo, type ReadinessLevel } from "./datasets.js";
 
 export interface DatasetsDialogOptions {
   /** The dataset shown in the app, when it is limited to one. */
@@ -14,6 +14,8 @@ export interface DatasetsDialogOptions {
   atlasUrl?: string | false;
   /** The border links between the datasets, for the "Border links" column and the unmatched list. */
   borders?: NetworkBordersIndex;
+  /** Operational points with a position on the track network, per dataset (from the network index). */
+  routable?: Record<string, number>;
   /** Called when the user opens another dataset. */
   onOpen: (id: string | undefined) => void;
 }
@@ -21,8 +23,10 @@ export interface DatasetsDialogOptions {
 const STATUS: Record<NonNullable<DatasetInfo["status"]>, string> = { loaded: "Up to date", stale: "Newer data published", pending: "Fetching", failed: "Update failed", removed: "Removed from ERA" };
 /** The signal aspect each status shows (MatData SignalStatus: go, caution, stop). */
 const ASPECT: Record<NonNullable<DatasetInfo["status"]>, "go" | "caution" | "stop"> = { loaded: "go", stale: "caution", pending: "caution", failed: "stop", removed: "caution" };
+/** Whether Routebook can route on it: green only with OPs on the tracks and a fair number of signals. */
+const READY_ASPECT: Record<ReadinessLevel, "go" | "caution" | "stop" | "off"> = { ready: "go", limited: "caution", unusable: "stop", unknown: "off" };
 
-type SortKey = "name" | "im" | "publishedAt" | "fetchedAt" | "status" | "ops" | "borders";
+type SortKey = "name" | "im" | "publishedAt" | "fetchedAt" | "status" | "routing" | "ops" | "borders";
 
 let dialog: HTMLDialogElement | undefined;
 let sortKey: SortKey = "name";
@@ -45,7 +49,7 @@ function statusOf(d: DatasetInfo): NonNullable<DatasetInfo["status"]> {
   return d.status ?? "loaded";
 }
 
-function sorted(list: DatasetInfo[], borders?: NetworkBordersIndex): DatasetInfo[] {
+function sorted(list: DatasetInfo[], borders?: NetworkBordersIndex, routable?: Record<string, number>): DatasetInfo[] {
   const key = (d: DatasetInfo): string | number => {
     switch (sortKey) {
       case "borders": return borders?.datasets[d.id]?.links ?? 0;
@@ -53,6 +57,7 @@ function sorted(list: DatasetInfo[], borders?: NetworkBordersIndex): DatasetInfo
       case "publishedAt": return d.publishedAt ?? "";
       case "fetchedAt": return d.fetchedAt ?? "";
       case "status": return ["failed", "pending", "stale", "removed", "loaded"].indexOf(statusOf(d));
+      case "routing": return ["unusable", "limited", "unknown", "ready"].indexOf(readiness(d, routable?.[d.id]).level);
       case "ops": return d.ops ?? 0;
       default: return d.name.toLowerCase();
     }
@@ -69,16 +74,16 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
   const body = dialog.querySelector<HTMLElement>(".ds-body")!;
   body.replaceChildren();
   const q = needle.trim().toLowerCase();
-  const rows = sorted(catalogue.datasets, opts.borders).filter((d) => !q || `${d.name} ${d.id} ${imNames(d)} ${d.graphs?.map((g) => `${g.imCode} ${g.country ?? ""} ${g.datasetId ?? ""}`).join(" ") ?? ""}`.toLowerCase().includes(q));
+  const rows = sorted(catalogue.datasets, opts.borders, opts.routable).filter((d) => !q || `${d.name} ${d.id} ${imNames(d)} ${d.graphs?.map((g) => `${g.imCode} ${g.country ?? ""} ${g.datasetId ?? ""}`).join(" ") ?? ""}`.toLowerCase().includes(q));
   const head = (label: string, key: SortKey, cls = "") =>
     h("th", { class: `${cls}${sortKey === key ? (sortDesc ? " sorted desc" : " sorted") : ""}`, scope: "col" }, h("button", { type: "button", text: label, "aria-label": `Sort by ${label}` }));
   const table = h(
     "table",
     { class: "ds-table" },
-    h("thead", {}, h("tr", {}, head("Network", "name"), head("Infrastructure manager", "im"), head("ERA publication", "publishedAt"), head("Fetched", "fetchedAt"), head("Status", "status"), head("Stations", "ops", "num"), head("Border links", "borders", "num"), h("th", { scope: "col", text: "" }))),
+    h("thead", {}, h("tr", {}, head("Network", "name"), head("Infrastructure manager", "im"), head("ERA publication", "publishedAt"), head("Fetched", "fetchedAt"), head("Status", "status"), head("Routing", "routing"), head("Stations", "ops", "num"), head("Border links", "borders", "num"), h("th", { scope: "col", text: "" }))),
   );
   table.querySelectorAll<HTMLButtonElement>("th button").forEach((b, i) => {
-    const keys: SortKey[] = ["name", "im", "publishedAt", "fetchedAt", "status", "ops", "borders"];
+    const keys: SortKey[] = ["name", "im", "publishedAt", "fetchedAt", "status", "routing", "ops", "borders"];
     b.addEventListener("click", () => {
       const k = keys[i]!;
       if (sortKey === k) sortDesc = !sortDesc;
@@ -103,6 +108,7 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
       : status === "pending" ? "ERA publishes this dataset; it is being fetched for the first time."
       : undefined;
     const canOpen = loadable([d]).length > 0;
+    const ready = readiness(d, opts.routable?.[d.id]);
     const atlas = atlasLink(opts.atlasUrl, graphs);
     const actions = h(
       "td",
@@ -122,7 +128,8 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
         h("td", { text: imNames(d) || "–" }),
         pub,
         h("td", { text: fmtDate(d.fetchedAt, true) }),
-        h("td", {}, h("span", { class: `ds-status md-signal-${ASPECT[status]}` }, h("span", { class: "md-lamps", "aria-hidden": "true" }, h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" })), STATUS[status]), detail ? h("small", { text: detail }) : undefined),
+        h("td", {}, lamp(ASPECT[status], STATUS[status]), detail ? h("small", { text: detail }) : undefined),
+        h("td", { class: "ds-routing" }, lamp(READY_ASPECT[ready.level], ready.level === "unusable" ? `⚠ ${ready.label}` : ready.label), ready.detail ? h("small", { text: ready.detail }) : undefined),
         h("td", { class: "num", text: d.ops ? d.ops.toLocaleString() : "–" }),
         borderCell(d, catalogue, opts.borders),
         actions,
@@ -143,6 +150,11 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
     }
     body.append(details);
   }
+}
+
+/** A MatData SignalStatus: three lamps, the one of the aspect lit, and its label. */
+function lamp(aspect: "go" | "caution" | "stop" | "off", label: string): HTMLElement {
+  return h("span", { class: `ds-status md-signal-${aspect}` }, h("span", { class: "md-lamps", "aria-hidden": "true" }, h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" })), label);
 }
 
 function borderCell(d: DatasetInfo, catalogue: DatasetCatalogue, borders?: NetworkBordersIndex): HTMLTableCellElement {
