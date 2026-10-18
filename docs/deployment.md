@@ -49,7 +49,7 @@ The container runs as the unprivileged `node` user (uid 1000): a host folder mou
 
 ## Choosing the RINF data
 
-The ERA knowledge graph holds one named graph per infrastructure manager (IM). A *dataset* in Routebook is one or more of those graphs, shown as one network. Each dataset gets its own entry in the **Network** picker of the app.
+The ERA knowledge graph holds one named graph per infrastructure manager (IM). A *dataset* in Routebook is one or more of those graphs, shown as one network. The app opens on every dataset at once (map and search), and the **Network** picker (or `?dataset=nor`, `?dataset=all`) narrows the map and the search to one; a dataset's data is only downloaded when a route needs it, so a deployment with all of RINF costs the browser no more than one with a single country until it routes.
 
 | `ROUTEBOOK_DATASETS` / `--dataset` | Fetches |
 |---|---|
@@ -74,7 +74,7 @@ docker compose run --rm routebook routebook fetch --dataset benelux --graph 0088
 
 Every fetch records what ERA published for each named graph of the dataset: the infrastructure manager, the ERA dataset id and file name, the publication date and the triple count, read from the [RINF dataset explorer](https://rinf.data.era.europa.eu) API and the repository (the same calls [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas) makes). The app shows it:
 
-- the **Datasets** button at the top right names the network shown and its ERA publication date, with a `loaded/listed` count when there are several datasets; it opens a dialog with every dataset, its infrastructure manager, publication date, dataset id, fetch time, status (up to date, update failed with the error, removed from ERA) and a link into RINF Atlas;
+- the **Datasets** button at the top right names the network shown and its ERA publication date (or the latest publication over all networks), with a `loaded/listed` count when there are several datasets; it opens a dialog with every dataset, its infrastructure manager, publication date, dataset id, fetch time, status (up to date, update failed with the error, removed from ERA), a link into RINF Atlas and a **Show** button that narrows the map and the search to that dataset;
 - the footer, printed with every routebook, says which dataset and publication the routebook is based on.
 
 The list is `datasets.json` in the data folder, written by `routebook fetch`, `fetch-all` and `index`. A dataset whose fetch failed keeps its previous bundle on offer and is marked failed until a fetch succeeds; a dataset no longer on the endpoint is marked removed. `ROUTEBOOK_DATASETS_API` (or `--datasets-api`) points at another dataset explorer, `none` skips it; `atlasUrl` in the configuration points the links at your own RINF Atlas, `false` removes them.
@@ -149,7 +149,7 @@ Other top-level fields:
 | Field | Meaning |
 |---|---|
 | `title` | App title in the header and the browser tab. |
-| `defaultDataset` | Dataset opened when the URL has none, e.g. `"nor"`. |
+| `defaultDataset` | Dataset the map and the search are narrowed to when the URL has none, e.g. `"nor"`; without it the app opens on every dataset. |
 | `defaultBasemap` | Background opened when the URL has none, e.g. `"ortho"`. |
 | `builtinBasemaps` | `true` (default), `false` to hide Streets and Satellite, or a list such as `["map"]`. |
 | `glyphs` | Font URL template for the station labels (MapLibre `glyphs`); the default is the MapLibre demo server. Self-host it for production or offline use. |

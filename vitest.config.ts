@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@routebook/rinf-client/compact": fileURLToPath(new URL("./packages/rinf-client/src/compact.ts", import.meta.url)),
+      "@routebook/rinf-client/network-index": fileURLToPath(new URL("./packages/rinf-client/src/network-index.ts", import.meta.url)),
       "@routebook/rinf-client": pkg("rinf-client"),
       "@routebook/routing": pkg("routing"),
       "@routebook/routebook": pkg("routebook"),

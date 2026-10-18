@@ -35,6 +35,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@routebook/rinf-client/compact", replacement: src("rinf-client", "compact.ts") },
+      { find: "@routebook/rinf-client/network-index", replacement: src("rinf-client", "network-index.ts") },
       { find: /^@routebook\/(routing|routebook|schematic)$/, replacement: fileURLToPath(new URL("../../packages/$1/src/index.ts", import.meta.url)) },
     ],
   },

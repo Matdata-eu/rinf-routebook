@@ -7,12 +7,12 @@
 import { atlasLink, fmtDate, imNames, latestOf, loadable, type DatasetCatalogue, type DatasetInfo } from "./datasets.js";
 
 export interface DatasetsDialogOptions {
-  /** The dataset shown in the app. */
-  current: string;
+  /** The dataset shown in the app, when it is limited to one. */
+  current?: string;
   /** Base URL of a RINF Atlas instance for the "Atlas" links, or false for none. */
   atlasUrl?: string | false;
   /** Called when the user opens another dataset. */
-  onOpen: (id: string) => void;
+  onOpen: (id: string | undefined) => void;
 }
 
 const STATUS: Record<NonNullable<DatasetInfo["status"]>, string> = { loaded: "Up to date", stale: "Newer data published", pending: "Fetching", failed: "Update failed", removed: "Removed from ERA" };
@@ -101,10 +101,13 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
     const actions = h(
       "td",
       { class: "ds-actions" },
-      canOpen ? h("button", { type: "button", class: "btn small", text: d.id === opts.current ? "Shown" : "Open", disabled: d.id === opts.current, title: `Open the ${d.name} network` }) : undefined,
+      canOpen ? h("button", { type: "button", class: "btn small", text: d.id === opts.current ? "Shown" : "Show", disabled: d.id === opts.current, title: `Show only the ${d.name} network on the map and in the search` }) : undefined,
       atlas ? h("a", { class: "btn small", href: atlas, target: "_blank", rel: "noopener", text: "Atlas", title: "Browse this dataset in RINF Atlas" }) : undefined,
     );
-    actions.querySelector("button")?.addEventListener("click", () => opts.onOpen(d.id));
+    actions.querySelector("button")?.addEventListener("click", () => {
+      dialog?.close();
+      opts.onOpen(d.id);
+    });
     tbody.append(
       h(
         "tr",
