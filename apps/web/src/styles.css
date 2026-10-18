@@ -172,6 +172,11 @@ a:hover { color: var(--brand-strong); }
 .ds-table th button:hover { color: var(--ink); }
 .ds-table th.sorted button { color: var(--ink); }
 .ds-table th.sorted button::after { content: " ▲"; }
+.ds-table td.num small { display: block; font-weight: 400; color: var(--muted); }
+.ds-table td.num small.warn { color: #b9770e; }
+.ds-borders { margin-top: 14px; font-size: 0.85rem; }
+.ds-borders summary { cursor: pointer; color: var(--muted); }
+.ds-borders ul { margin: 6px 0 0; padding-left: 20px; }
 .ds-table th.sorted.desc button::after { content: " ▼"; }
 .ds-table .num { text-align: right; }
 .ds-table td small { display: block; color: var(--ink-muted); font-size: 13px; overflow-wrap: anywhere; }
@@ -334,6 +339,8 @@ a:hover { color: var(--brand-strong); }
 .kind-line .c-km, .kind-line .c-label small { color: var(--brand-strong); }
 .kind-origin, .kind-destination { font-weight: 600; background: var(--surface); }
 .kind-op .lbl { font-weight: 600; }
+.kind-border { background: var(--brand-soft); }
+.kind-border .lbl { font-weight: 700; color: var(--brand-strong); }
 .kind-tunnel { background: var(--surface); }
 .kind-missing { background: repeating-linear-gradient(135deg, var(--surface-raised) 0 8px, var(--amber-soft) 8px 16px); }
 .kind-kmPost { min-height: 30px; font-size: 14px; color: var(--ink-muted); }
@@ -432,6 +439,7 @@ a:hover { color: var(--brand-strong); }
 .drv-mk.drv-k-origin .drv-mk-flag { background: var(--brand); }
 .drv-mk.drv-k-levelCrossing .drv-mk-flag { background: #fff; color: var(--danger); border: 2px solid var(--danger); }
 .drv-mk.drv-k-tunnel .drv-mk-flag { background: var(--ink-muted); }
+.drv-mk.drv-k-border .drv-mk-flag { background: var(--brand-strong); }
 
 @media (max-width: 1000px) {
   .driving .layout { grid-template-rows: 62vh minmax(0, 1fr); }

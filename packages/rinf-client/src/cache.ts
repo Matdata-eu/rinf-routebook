@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { constants as zlib, brotliCompressSync, gzipSync } from "node:zlib";
 import { basename, join } from "node:path";
 import { WEB_PARTS, expandIris, toWebBundle, type WebBundleMeta } from "./compact.js";
-import { datasetIndex, mergeIndexes, type DatasetIndex } from "./network-index.js";
+import { BORDER_THRESHOLD_M, borderCandidates, datasetIndex, matchBorders, mergeIndexes, type DatasetIndex, type NetworkBordersIndex } from "./network-index.js";
 import { fingerprintsDiffer, imCodeOf, latestPublication } from "./era.js";
 import type { GraphProvenance, Snapshot, SnapshotMeta } from "./types.js";
 
@@ -91,20 +91,25 @@ export async function saveWebBundle(dir: string, snapshot: Snapshot, extras: Rec
  */
 export async function readDatasetIndex(root: string, id: string): Promise<DatasetIndex | undefined> {
   const dir = join(root, id);
+  let parsed: DatasetIndex | undefined;
   try {
-    const parsed = JSON.parse(await readFile(join(dir, "index.json"), "utf8")) as DatasetIndex;
-    if (parsed && Array.isArray(parsed.ops) && Array.isArray(parsed.sols) && parsed.dataset?.id) return parsed;
+    const p = JSON.parse(await readFile(join(dir, "index.json"), "utf8")) as DatasetIndex;
+    if (p && Array.isArray(p.ops) && Array.isArray(p.sols) && p.dataset?.id) parsed = p;
   } catch {
     /* no index.json: derive it */
   }
+  if (parsed?.borders) return parsed;
   try {
     const meta = JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as WebBundleMeta;
     const prefixes = meta.prefixes ?? {};
-    const ops = expandIris(JSON.parse(await readFile(join(dir, "ops.json"), "utf8")), prefixes) as Snapshot["ops"];
-    const sols = expandIris(JSON.parse(await readFile(join(dir, "sols.json"), "utf8")), prefixes) as Snapshot["sols"];
-    return datasetIndex(id, { meta, ops, sols });
+    const part = async <T>(name: string) => expandIris(JSON.parse(await readFile(join(dir, `${name}.json`), "utf8")), prefixes) as T;
+    const [ops, topology] = await Promise.all([part<Snapshot["ops"]>("ops"), part<Snapshot["topology"]>("topology")]);
+    // an index written before border links existed: only the border candidates are missing
+    if (parsed) return { ...parsed, borders: borderCandidates(ops, topology) };
+    const sols = await part<Snapshot["sols"]>("sols");
+    return datasetIndex(id, { meta, ops, sols, topology });
   } catch {
-    return undefined;
+    return parsed;
   }
 }
 
@@ -112,7 +117,18 @@ export async function readDatasetIndex(root: string, id: string): Promise<Datase
  * Write `root/index/ops.json` and `root/index/sols.json` (with .gz/.br) from the index parts of the
  * datasets that have data, swapped into place when complete. Returns the number of OPs indexed.
  */
-export async function writeNetworkIndex(root: string, entries: DatasetEntry[]): Promise<{ datasets: number; ops: number; sols: number }> {
+export interface NetworkIndexResult {
+  datasets: number;
+  ops: number;
+  sols: number;
+  borders: NetworkBordersIndex;
+}
+
+/**
+ * Merge the datasets' index parts into `index/ops.json`, `index/sols.json` and the border links
+ * between them into `index/borders.json` (`routebook link`), written atomically and precompressed.
+ */
+export async function writeNetworkIndex(root: string, entries: DatasetEntry[], opts: { borderThreshold?: number } = {}): Promise<NetworkIndexResult> {
   const parts: DatasetIndex[] = [];
   for (const e of entries) {
     if (!e.fetchedAt) continue;
@@ -120,11 +136,12 @@ export async function writeNetworkIndex(root: string, entries: DatasetEntry[]): 
     if (part) parts.push(part);
   }
   const { ops, sols } = mergeIndexes(parts);
+  const borders = matchBorders(parts, opts.borderThreshold ?? BORDER_THRESHOLD_M);
   const dir = join(root, "index");
   const tmp = `${dir}.tmp`;
   await rm(tmp, { recursive: true, force: true });
   await mkdir(tmp, { recursive: true });
-  for (const [name, value] of [["ops", ops], ["sols", sols]] as const) {
+  for (const [name, value] of [["ops", ops], ["sols", sols], ["borders", borders]] as const) {
     const json = JSON.stringify(value);
     const file = join(tmp, `${name}.json`);
     await writeFile(file, json);
@@ -133,7 +150,7 @@ export async function writeNetworkIndex(root: string, entries: DatasetEntry[]): 
     await writeFile(`${file}.br`, br);
   }
   await swapDirectory(tmp, dir);
-  return { datasets: parts.length, ops: ops.ops.length, sols: sols.sols.length };
+  return { datasets: parts.length, ops: ops.ops.length, sols: sols.sols.length, borders };
 }
 
 /**
@@ -284,8 +301,10 @@ export interface IndexOptions {
   /** When the endpoint was compared with the data (default: kept from the previous catalogue). */
   checkedAt?: string;
   endpoint?: string;
-  /** Also rewrite the network index (`index/ops.json`, `index/sols.json`); default true. */
+  /** Also rewrite the network index (`index/ops.json`, `index/sols.json`, `index/borders.json`); default true. */
   networkIndex?: boolean;
+  /** Distance under which two border points of different datasets are linked, metres (default 300). */
+  borderThreshold?: number;
 }
 
 /**
@@ -365,6 +384,6 @@ export async function writeDatasetIndex(root: string, opts: IndexOptions = {}): 
   };
   await mkdir(root, { recursive: true });
   await writeFile(join(root, "datasets.json"), JSON.stringify(catalogue, null, 2));
-  if (opts.networkIndex !== false) await writeNetworkIndex(root, entries);
+  if (opts.networkIndex !== false) await writeNetworkIndex(root, entries, { ...(opts.borderThreshold !== undefined ? { borderThreshold: opts.borderThreshold } : {}) });
   return entries;
 }

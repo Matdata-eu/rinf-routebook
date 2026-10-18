@@ -19,15 +19,16 @@ const SIGNAL_TYPES: Record<string, string> = {
 const KIND_ORDER: Record<string, number> = {
   origin: 0,
   op: 1,
-  line: 2,
-  speed: 3,
-  gradient: 4,
-  tunnel: 5,
-  signal: 6,
-  switch: 7,
-  levelCrossing: 8,
-  kmPost: 9,
-  missing: 10,
+  border: 2,
+  line: 3,
+  speed: 4,
+  gradient: 5,
+  tunnel: 6,
+  signal: 7,
+  switch: 8,
+  levelCrossing: 9,
+  kmPost: 10,
+  missing: 11,
   destination: 99,
 };
 
@@ -318,3 +319,52 @@ export function buildRoutebook({ index, route, from, to, endpointModes }: BuildR
 }
 
 export const ITEM_KINDS: ItemKind[] = Object.keys(KIND_ORDER) as ItemKind[];
+
+export interface NetworkLabels {
+  /** The dataset a micro element belongs to. */
+  datasetOf: (ne: string) => string | undefined;
+  /** Display name of a dataset (its infrastructure manager, or its name). */
+  labelOf: (dataset: string) => string;
+}
+
+/**
+ * On a route across RINF datasets: tag every item with its dataset, add a "border" item where the
+ * route passes a border link (a change of infrastructure manager), and drop the second copy of a
+ * border point that both datasets declare (same UOPID within 2 km of the first).
+ */
+export function addBorderItems(rb: Routebook, networks: NetworkLabels): Routebook {
+  const steps = rb.route.steps;
+  const datasetAt = (distance: number): string | undefined => {
+    let step = steps[0];
+    for (const s of steps) if (s.startDistance <= distance + 1e-6) step = s;
+    return step ? networks.datasetOf(step.ne) : undefined;
+  };
+  const items: RoutebookItem[] = [];
+  const borderUopids = new Map<string, number>();
+  for (const item of rb.items) {
+    const dataset = datasetAt(item.distance);
+    const tagged = dataset ? { ...item, dataset } : item;
+    if (item.kind === "op" && typeof item.data?.uopid === "string") {
+      const seenAt = borderUopids.get(item.data.uopid);
+      if (seenAt !== undefined && Math.abs(seenAt - item.distance) < 2000) continue;
+      borderUopids.set(item.data.uopid, item.distance);
+    }
+    items.push(tagged);
+  }
+  let last = steps[0] ? networks.datasetOf(steps[0].ne) : undefined;
+  for (const s of steps) {
+    const ds = networks.datasetOf(s.ne);
+    if (ds === last || ds === undefined) continue;
+    items.push({
+      kind: "border",
+      distance: s.startDistance,
+      label: `${networks.labelOf(last ?? "")} → ${networks.labelOf(ds)}`,
+      quality: "derived",
+      data: { from: last, to: ds },
+      dataset: ds,
+      note: "RINF has no connection between infrastructure managers' networks; this link was derived by Routebook from the border points",
+    });
+    last = ds;
+  }
+  return { ...rb, items: sortItems(items) };
+}

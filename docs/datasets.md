@@ -87,6 +87,17 @@ One check costs about two small requests per dataset (some 70 for the whole endp
 
 The app no longer needs a bundle to show a network. Every bundle carries an `index.json` (its operational points with position, type and whether they are on the routable topology, and its sections of line simplified to about 50 m), and whenever the catalogue is written (`fetch`, `fetch-all`, `sync`, `index`) the parts of every loaded dataset are merged into `index/ops.json` and `index/sols.json`, written atomically and precompressed like the bundles. A bundle fetched before this index existed is indexed from its `ops.json` and `sols.json`. The index weighs tens of KB per country, so the app opens on all of RINF at once; a dataset's bundle (a few MB) is only fetched when a route needs it. `routebook index` rebuilds the catalogue and the index from the bundles on disk.
 
+## Border links: `data/web/index/borders.json`
+
+RINF publishes one graph per infrastructure manager and no net relations between them: Bane NOR's topology ends at Kornsjø, Trafikverket's at Mon, and nothing in the data says they meet. So that a route can run from Oslo to Stockholm, the catalogue writer derives **border links** between the datasets and writes them with the index, whenever the catalogue is written and on `routebook link`:
+
+1. each bundle's `index.json` lists its *border candidates*: border points (op types 90 and 140) and OPs whose UOPID is coded for another country than most of the dataset's, each with the end of its micro element that faces out of the network (the end without a navigable relation, else the end nearer the OP);
+2. two candidates of different datasets with the **same UOPID** are linked (both IMs usually declare the shared border point, EU00237 for Bjørnfjell / Vassijaure);
+3. the remaining border points are linked to the nearest border point of another dataset within **300 m** (`routebook link --threshold <m>` changes it);
+4. everything else is listed as *unmatched*: a border point with no partner, or without a position on the track network. The Datasets dialog shows the links per dataset and the unmatched list, which is worth reporting to the infrastructure managers.
+
+Every link is derived by Routebook, not read from RINF, and the routebook says so: the strip gets an **Infrastructure manager change** item (quality *derived*) where the route passes the link, and the two networks' topologies are joined at that point at zero length. The app loads the bundles of every dataset the route runs through (up to six, chosen on a meso graph of the border links) and lists each dataset's publication in the footer and the print.
+
 ## Memory
 
 A fetch holds one dataset in memory at a time; the sync processes them one after the other. Norway fits in Node's default heap. The largest networks (Germany, France) need more: the sync child inherits `NODE_OPTIONS` from the container's environment, so set `NODE_OPTIONS=--max-old-space-size=6144` or more for `ROUTEBOOK_DATASETS=all` (the public instance does, see `deploy/matdata/docker-compose.yml`). The sync log ends each pass with `peak memory N MB`: measure it on the first full run and give the container that much. Idle, the server and the sleeping sync need about 100 MB together.

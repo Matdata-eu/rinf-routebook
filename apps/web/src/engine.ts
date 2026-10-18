@@ -1,7 +1,8 @@
 import type { OperationalPoint, Snapshot } from "@routebook/rinf-client";
 import { expandIris, fromWebBundle, WEB_PARTS, type WebBundleMeta, type WebPart } from "@routebook/rinf-client/compact";
+import { borderRelations, type BorderLink } from "@routebook/rinf-client/network-index";
 import { RoutingGraph, opEndpoint, trackPreferenceCostModel, type CostModel } from "@routebook/routing";
-import { RoutebookIndex, buildRoutebook, type Routebook } from "@routebook/routebook";
+import { RoutebookIndex, addBorderItems, buildRoutebook, type NetworkLabels, type Routebook } from "@routebook/routebook";
 import {
   TopoNetwork,
   classifySwitches,
@@ -46,6 +47,54 @@ export interface RouteResult {
 
 export interface EngineOptions {
   switches?: CompactSwitch[];
+  /** On a merged bundle: which dataset each element belongs to, for the border items of the routebook. */
+  networks?: NetworkLabels;
+}
+
+/**
+ * One bundle out of several datasets' bundles, joined by their border links: the topologies,
+ * features and geometry side by side, plus one navigable relation per border link, so that the
+ * routing graph, the routebook index and the schematic work unchanged across networks. The
+ * objects are shared with the parts (nothing is copied but the arrays).
+ */
+export function mergeBundles(parts: Array<{ id: string; bundle: Bundle; label?: string }>, links: BorderLink[]): { bundle: Bundle; networks: NetworkLabels } {
+  const ids = new Set(parts.map((p) => p.id));
+  const datasetOfNe = new Map<string, string>();
+  for (const p of parts) for (const ne of p.bundle.snapshot.topology.netElements) datasetOfNe.set(ne.id, p.id);
+  const labels = new Map(parts.map((p) => [p.id, p.label ?? p.bundle.snapshot.meta.imName ?? p.bundle.snapshot.meta.name ?? p.id]));
+  const snapshots = parts.map((p) => p.bundle.snapshot);
+  const first = snapshots[0]!;
+  const counts: Record<string, number> = {};
+  for (const s of snapshots) for (const [k, v] of Object.entries(s.meta.counts)) counts[k] = (counts[k] ?? 0) + v;
+  const snapshot: Snapshot = {
+    meta: {
+      ...first.meta,
+      graph: first.meta.graph,
+      graphs: snapshots.flatMap((s) => s.meta.graphs ?? [s.meta.graph]),
+      country: parts.map((p) => p.id).join("+"),
+      name: snapshots.map((s) => s.meta.name ?? s.meta.country).join(" + "),
+      imName: [...new Set(snapshots.map((s) => s.meta.imName).filter((n): n is string => !!n))].join(", "),
+      counts,
+      provenance: snapshots.flatMap((s) => s.meta.provenance ?? []),
+    },
+    ops: snapshots.flatMap((s) => s.ops),
+    lines: snapshots.flatMap((s) => s.lines),
+    sols: snapshots.flatMap((s) => s.sols),
+    topology: {
+      netElements: snapshots.flatMap((s) => s.topology.netElements),
+      netRelations: [...snapshots.flatMap((s) => s.topology.netRelations), ...borderRelations(links, ids)],
+    },
+    tracks: snapshots.flatMap((s) => s.tracks),
+    features: snapshots.flatMap((s) => s.features),
+    tunnels: snapshots.flatMap((s) => s.tunnels),
+    geometry: Object.assign({}, ...snapshots.map((s) => s.geometry ?? {})) as Snapshot["geometry"],
+  };
+  const switches = parts.flatMap((p) => p.bundle.switches ?? []);
+  const everyPartHasSwitches = parts.every((p) => p.bundle.switches);
+  return {
+    bundle: { snapshot, ...(everyPartHasSwitches && switches.length ? { switches } : {}) },
+    networks: { datasetOf: (ne) => datasetOfNe.get(ne), labelOf: (id) => labels.get(id) ?? id },
+  };
 }
 
 /** Everything needed to route and build routebooks in the browser, built once per snapshot. */
@@ -54,6 +103,7 @@ export class RouteEngine {
   readonly index: RoutebookIndex;
   readonly costModel: CostModel;
   private readonly switchRows: CompactSwitch[] | undefined;
+  private readonly networks: NetworkLabels | undefined;
   private schematicData: { network: TopoNetwork; switches: SwitchInfo[] } | undefined;
 
   constructor(readonly snapshot: Snapshot, opts: EngineOptions = {}) {
@@ -61,6 +111,7 @@ export class RouteEngine {
     this.index = new RoutebookIndex(snapshot);
     this.costModel = trackPreferenceCostModel(snapshot.tracks);
     this.switchRows = opts.switches;
+    this.networks = opts.networks;
   }
 
   /**
@@ -102,7 +153,8 @@ export class RouteEngine {
     if (dst.intervals.length === 0) throw new Error(`${to.name} has no position on the track network in RINF`);
     const route = this.graph.route(src.intervals, dst.intervals, { costModel: this.costModel });
     if (!route) throw new Error(`No route between ${from.name} and ${to.name} (not connected in the RINF topology)`);
-    const routebook = buildRoutebook({ index: this.index, route, from, to, endpointModes: { from: src.mode, to: dst.mode } });
+    const built = buildRoutebook({ index: this.index, route, from, to, endpointModes: { from: src.mode, to: dst.mode } });
+    const routebook = this.networks ? addBorderItems(built, this.networks) : built;
     const geometry = buildRouteGeometry(route, this.snapshot.geometry ?? {}, this.graph.lengths);
     return { routebook, geometry };
   }
