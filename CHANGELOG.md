@@ -29,6 +29,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- The web app follows the MatData design system: Barlow (bundled, no font requests to third parties), MatData colours, spacing, radii and shadows, the junction mark beside the name and as favicon, sentence-case labels, segmented view and background switches, a MatData-blue route with signal amber for the selected item, and SignalStatus lamps for dataset states in the Datasets dialog. Light theme only.
 - The optional aerial background is configured at runtime (`config.json` or `ESRI_API_KEY`) instead of `VITE_*` variables in `apps/web/.env.local`.
 - The server (`scripts/serve.mjs`) also serves `config.json`, `datasets.json`, the data bundles from the data folder and `/healthz`, sends cache and security headers, and listens on `HOST` / `PORT`.
 

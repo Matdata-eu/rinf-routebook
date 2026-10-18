@@ -16,6 +16,8 @@ export interface DatasetsDialogOptions {
 }
 
 const STATUS: Record<NonNullable<DatasetInfo["status"]>, string> = { loaded: "Up to date", stale: "Newer data published", pending: "Fetching", failed: "Update failed", removed: "Removed from ERA" };
+/** The signal aspect each status shows (MatData SignalStatus: go, caution, stop). */
+const ASPECT: Record<NonNullable<DatasetInfo["status"]>, "go" | "caution" | "stop"> = { loaded: "go", stale: "caution", pending: "caution", failed: "stop", removed: "caution" };
 
 type SortKey = "name" | "im" | "publishedAt" | "fetchedAt" | "status" | "ops";
 
@@ -116,7 +118,7 @@ function render(catalogue: DatasetCatalogue, opts: DatasetsDialogOptions): void 
         h("td", { text: imNames(d) || "–" }),
         pub,
         h("td", { text: fmtDate(d.fetchedAt, true) }),
-        h("td", {}, h("span", { class: `ds-status`, text: STATUS[status] }), detail ? h("small", { text: detail }) : undefined),
+        h("td", {}, h("span", { class: `ds-status md-signal-${ASPECT[status]}` }, h("span", { class: "md-lamps", "aria-hidden": "true" }, h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" }), h("i", { class: "md-lamp" })), STATUS[status]), detail ? h("small", { text: detail }) : undefined),
         h("td", { class: "num", text: d.ops ? d.ops.toLocaleString() : "–" }),
         actions,
       ),

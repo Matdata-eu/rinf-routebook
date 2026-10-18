@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Open-source railway routebook built on ERA RINF data" />
     <title>Routebook</title>
+    <link rel="icon" type="image/svg+xml" href="./src/favicon.svg" />
+    <meta name="theme-color" content="#0563bb" />
   </head>
   <body data-state="loading">
     <div id="disclaimer" class="disclaimer" role="note" hidden></div>
     <div id="print-stamp" class="print-stamp" aria-hidden="true" hidden></div>
     <header class="topbar">
-      <h1 class="brand" id="brand">Routebook</h1>
+      <h1 class="brand"><svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><g transform="translate(0 -1)" fill="none" stroke="#0563bb" stroke-width="3.6" stroke-linejoin="round"><path d="M9.1 32 H11.4"/><path d="M24.6 32 H38.9"/><path d="M22.67 27.33 L35 15 H38.9"/><circle cx="5.5" cy="32" r="3.6"/><circle cx="42.5" cy="32" r="3.6"/><circle cx="42.5" cy="15" r="3.6"/><circle cx="18" cy="32" r="6.6"/><circle cx="18" cy="32" r="2.4" fill="#0563bb" stroke="none"/></g></svg><span id="brand">Routebook</span></h1>
       <form class="picker" autocomplete="off" onsubmit="return false">
         <div class="field" hidden>
           <label for="dataset">Network</label>
@@ -60,7 +62,7 @@
           <div id="filters" class="filters"></div>
         </details>
         <section id="routebook" class="routebook"></section>
-        <footer class="panel-foot"><span id="meta"></span> · <span id="rinf-credit">RINF data © European Union Agency for Railways</span> · <a href="https://github.com/Matdata-eu/rinf-routebook" target="_blank" rel="noopener">Routebook</a>, open source (MIT) · <a href="https://github.com/Matdata-eu/rinf-routebook/issues" target="_blank" rel="noopener">Report an issue</a><span id="privacy" hidden> · <a target="_blank" rel="noopener"></a></span></footer>
+        <footer class="panel-foot"><span id="meta"></span> · <span id="rinf-credit">RINF data © European Union Agency for Railways</span> · <a href="https://github.com/Matdata-eu/rinf-routebook" target="_blank" rel="noopener">Routebook</a>, open source (MIT) by <a href="https://matdata.eu" target="_blank" rel="noopener">MatData</a> · <a href="https://github.com/Matdata-eu/rinf-routebook/issues" target="_blank" rel="noopener">Report an issue</a><span id="privacy" hidden> · <a target="_blank" rel="noopener"></a></span></footer>
       </aside>
     </main>
     <script type="module" src="/src/main.ts"></script>

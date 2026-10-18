@@ -20,16 +20,16 @@ function symbol(kind: string, data?: Record<string, unknown>): SVGSVGElement | H
   const paths: Record<string, string> = {
     signal: `<line x1="10" y1="19" x2="10" y2="9" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="6" r="5" fill="var(--sig, #c0392b)" stroke="currentColor" stroke-width="1.2"/>`,
     switch: `<path d="M3 17 L10 10 L10 3 M10 10 L17 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>`,
-    tunnel: `<path d="M2 18 V10 A8 8 0 0 1 18 10 V18" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M6 18 V11 A4 4 0 0 1 14 11 V18" fill="#555"/>`,
-    kmPost: `<rect x="5" y="5" width="10" height="10" transform="rotate(45 10 10)" fill="#fff" stroke="currentColor" stroke-width="1.6"/>`,
+    tunnel: `<path d="M2 18 V10 A8 8 0 0 1 18 10 V18" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M6 18 V11 A4 4 0 0 1 14 11 V18" fill="var(--ink-muted)"/>`,
+    kmPost: `<rect x="5" y="5" width="10" height="10" transform="rotate(45 10 10)" fill="var(--surface-raised)" stroke="currentColor" stroke-width="1.6"/>`,
     levelCrossing: `<path d="M4 4 L16 16 M16 4 L4 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>`,
-    op: `<rect x="3" y="5" width="14" height="10" rx="2" fill="#1f4e79"/>`,
-    origin: `<circle cx="10" cy="10" r="7" fill="#1e8449"/>`,
-    destination: `<circle cx="10" cy="10" r="7" fill="#922b21"/>`,
+    op: `<rect x="3" y="5" width="14" height="10" rx="2" fill="var(--ink)"/>`,
+    origin: `<circle cx="10" cy="10" r="7" fill="var(--from)"/>`,
+    destination: `<circle cx="10" cy="10" r="7" fill="var(--to)"/>`,
     speed: `<circle cx="10" cy="10" r="7.5" fill="#fff" stroke="#c0392b" stroke-width="2.5"/>`,
-    gradient: `<path d="M2 16 L18 6 L18 16 Z" fill="#888"/>`,
-    line: `<path d="M2 10 H18" stroke="#1f4e79" stroke-width="4"/>`,
-    missing: `<path d="M10 2 L19 18 H1 Z" fill="#f5b041" stroke="#7e5109" stroke-width="1.2"/><text x="10" y="16" font-size="10" text-anchor="middle" fill="#000">!</text>`,
+    gradient: `<path d="M2 16 L18 6 L18 16 Z" fill="var(--line-strong)"/>`,
+    line: `<path d="M2 10 H18" stroke="var(--brand)" stroke-width="4"/>`,
+    missing: `<path d="M10 2 L19 18 H1 Z" fill="var(--amber)" stroke="var(--amber-ink)" stroke-width="1.2"/><text x="10" y="16" font-size="10" font-weight="700" text-anchor="middle" fill="var(--on-amber)">!</text>`,
   };
   const signalColors: Record<string, string> = {
     home: "#c0392b", exit: "#8e44ad", block: "#27ae60", intermediate: "#e67e22", shunting: "#7f8c8d", distant: "#f1c40f",
@@ -82,7 +82,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
   strip.setAttribute("aria-label", "Routebook");
   const cols = el("li", "rb-row rb-cols");
   cols.setAttribute("aria-hidden", "true");
-  for (const [c, t] of [["c-dist", "km"], ["c-speed", "km/h"], ["c-grad", "‰"], ["c-km", "line km"], ["c-sym", ""], ["c-label", "item"], ["c-q", "q"]]) {
+  for (const [c, t] of [["c-dist", "km"], ["c-speed", "km/h"], ["c-grad", "‰"], ["c-km", "Line km"], ["c-sym", ""], ["c-label", "Item"], ["c-q", "Q"]]) {
     cols.append(el("span", c, t));
   }
   strip.append(cols);

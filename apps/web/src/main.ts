@@ -1,5 +1,9 @@
 import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import "@fontsource/barlow/400.css";
+import "@fontsource/barlow/500.css";
+import "@fontsource/barlow/600.css";
+import "@fontsource/barlow/700.css";
 import "./styles.css";
 import type { OperationalPoint } from "@routebook/rinf-client";
 import type { IndexOp } from "@routebook/rinf-client/network-index";
@@ -52,7 +56,7 @@ const style: StyleSpecification = {
   glyphs: CONFIG.glyphs ?? "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   sources: { basemap: basemap.source, ...Object.fromEntries(OVERLAYS.map((o) => [`overlay-${o.id}`, o.source])) },
   layers: [
-    { id: "bg", type: "background", paint: { "background-color": "#eef1f4" } },
+    { id: "bg", type: "background", paint: { "background-color": "#edf0f4" } },
     { id: "basemap", type: "raster", source: "basemap", paint: basemap.paint },
     ...OVERLAYS.map((o) => ({
       id: `overlay-${o.id}`,
@@ -79,7 +83,8 @@ map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 if (import.meta.env.DEV) Object.assign(window, { routebookMap: map });
 map.addControl(basemapSwitch(), "top-right");
 
-const SOLS_COLOR = { plain: "#5b6b7b", aerial: "#f2f4f6" };
+// MatData colours: ink-muted network, brand route and endpoints, signal-amber selection
+const SOLS_COLOR = { plain: "#56606c", aerial: "#f2f4f6" };
 
 /** Swap the background imagery in place, under the railway layers. */
 function setBasemap(next: Basemap): void {
@@ -179,7 +184,7 @@ function addLayers(net: Network): void {
 
   map.addLayer({ id: "sols", type: "line", source: "sols", ...withFilter(datasetFilter()), paint: { "line-color": basemap.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
   map.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 6, 12, 12] } });
-  map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#d35400", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 12, 7] } });
+  map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#0563bb", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 12, 7] } });
   map.addLayer({
     id: "ops",
     type: "circle",
@@ -187,7 +192,7 @@ function addLayers(net: Network): void {
     ...withFilter(datasetFilter()),
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, ["case", ["==", ["get", "station"], 1], 2.5, 1.5], 11, ["case", ["==", ["get", "station"], 1], 7, 4]],
-      "circle-color": ["case", ["==", ["get", "station"], 1], "#1f4e79", "#7f8c8d"],
+      "circle-color": ["case", ["==", ["get", "station"], 1], "#1c2633", "#808893"],
       "circle-stroke-color": "#fff",
       "circle-stroke-width": 1,
     },
@@ -199,10 +204,10 @@ function addLayers(net: Network): void {
     minzoom: 8,
     ...withFilter(datasetFilter(["==", ["get", "station"], 1])),
     layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
-    paint: { "text-color": "#1f2d3a", "text-halo-color": "#fff", "text-halo-width": 1.5 },
+    paint: { "text-color": "#1c2633", "text-halo-color": "#fff", "text-halo-width": 1.5 },
   });
-  map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", "#1e8449", "#922b21"], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
-  map.addLayer({ id: "selected", type: "circle", source: "selected", paint: { "circle-radius": 10, "circle-color": "rgba(241,196,15,0.35)", "circle-stroke-color": "#b7950b", "circle-stroke-width": 3 } });
+  map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", "#0563bb", "#1c2633"], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
+  map.addLayer({ id: "selected", type: "circle", source: "selected", paint: { "circle-radius": 10, "circle-color": "rgba(242,179,0,0.35)", "circle-stroke-color": "#f2b300", "circle-stroke-width": 3 } });
 
   map.on("mouseenter", "ops", () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", "ops", () => (map.getCanvas().style.cursor = ""));

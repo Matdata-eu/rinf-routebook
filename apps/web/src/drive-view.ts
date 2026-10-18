@@ -260,7 +260,7 @@ export class DriveView {
   private routeGradient(p: number): maplibregl.ExpressionSpecification {
     // travelled part grey, the part ahead in the accent colour
     const at = Math.min(0.999999, Math.max(0.000001, p));
-    return ["step", ["line-progress"], "#9aa6b1", at, "#d35400"];
+    return ["step", ["line-progress"], "#808893", at, "#0563bb"];
   }
 
   // ------------------------------------------------------------ controls
@@ -534,13 +534,13 @@ function cueIcon(item: RoutebookItem): Element {
   }
   const color = SIGNAL_COLORS[String(item.data?.signalType)] ?? "#c0392b";
   const bodies: Record<string, string> = {
-    signal: `<rect x="13" y="2" width="14" height="24" rx="7" fill="#1d2733"/><circle cx="20" cy="9" r="4.2" fill="${color}"/><circle cx="20" cy="19" r="4.2" fill="#3d4a57"/><rect x="18.5" y="26" width="3" height="12" fill="#1d2733"/>`,
-    op: `<rect x="5" y="9" width="30" height="20" rx="4" fill="#1f4e79"/><path d="M11 23 h18" stroke="#fff" stroke-width="2.5"/><path d="M20 29 v9" stroke="#1f4e79" stroke-width="3"/>`,
-    destination: `<path d="M10 37 V4" stroke="#1d2733" stroke-width="3"/><path d="M11 5 h22 l-5 7 l5 7 h-22 z" fill="#922b21"/>`,
-    tunnel: `<path d="M3 36 V20 A17 17 0 0 1 37 20 V36" fill="#5d6b79"/><path d="M10 36 V22 A10 10 0 0 1 30 22 V36" fill="#1d2733"/>`,
+    signal: `<rect x="13" y="2" width="14" height="24" rx="7" fill="#1c2633"/><circle cx="20" cy="9" r="4.2" fill="${color}"/><circle cx="20" cy="19" r="4.2" fill="#3d4a57"/><rect x="18.5" y="26" width="3" height="12" fill="#1c2633"/>`,
+    op: `<rect x="5" y="9" width="30" height="20" rx="4" fill="#1c2633"/><path d="M11 23 h18" stroke="#fff" stroke-width="2.5"/><path d="M20 29 v9" stroke="#1c2633" stroke-width="3"/>`,
+    destination: `<path d="M10 37 V4" stroke="#1c2633" stroke-width="3"/><path d="M11 5 h22 l-5 7 l5 7 h-22 z" fill="#0563bb"/>`,
+    tunnel: `<path d="M3 36 V20 A17 17 0 0 1 37 20 V36" fill="#56606c"/><path d="M10 36 V22 A10 10 0 0 1 30 22 V36" fill="#1c2633"/>`,
     levelCrossing: `<path d="M7 7 L33 33 M33 7 L7 33" stroke="#c0392b" stroke-width="6" stroke-linecap="round"/><path d="M7 7 L33 33 M33 7 L7 33" stroke="#fff" stroke-width="2" stroke-linecap="round"/>`,
   };
-  return svg("0 0 40 40", bodies[item.kind] ?? `<circle cx="20" cy="20" r="8" fill="#5d6b79"/>`, "drv-icon");
+  return svg("0 0 40 40", bodies[item.kind] ?? `<circle cx="20" cy="20" r="8" fill="#56606c"/>`, "drv-icon");
 }
 
 /** DOM for a map marker standing at an item; the inner element is scaled with distance. */
@@ -552,7 +552,7 @@ function markerElement(item: RoutebookItem): HTMLElement {
   } else if (item.kind === "signal") {
     const color = SIGNAL_COLORS[String(item.data?.signalType)] ?? "#c0392b";
     inner.append(
-      svg("0 0 20 44", `<rect x="3" y="1" width="14" height="24" rx="7" fill="#1d2733"/><circle cx="10" cy="8" r="4" fill="${color}"/><circle cx="10" cy="18" r="4" fill="#3d4a57"/><rect x="8.5" y="25" width="3" height="19" fill="#1d2733"/>`, "drv-mk-signal"),
+      svg("0 0 20 44", `<rect x="3" y="1" width="14" height="24" rx="7" fill="#1c2633"/><circle cx="10" cy="8" r="4" fill="${color}"/><circle cx="10" cy="18" r="4" fill="#3d4a57"/><rect x="8.5" y="25" width="3" height="19" fill="#1c2633"/>`, "drv-mk-signal"),
     );
     if (item.label) inner.append(el("span", "drv-mk-label", item.label));
   } else {
