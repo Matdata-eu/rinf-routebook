@@ -11,5 +11,5 @@ SELECT ?sol ?label ?opStart ?opEnd ?line ?length ?wkt WHERE { GRAPH {{graph}} {
   OPTIONAL { ?sol rdfs:label ?label }
   OPTIONAL { ?sol era:nationalLine ?line }
   OPTIONAL { ?sol era:lengthOfSectionOfLine ?length }
-  OPTIONAL { ?sol geo:hasGeometry/geo:asWKT ?wkt }
+  OPTIONAL { ?sol (geo:hasGeometry|era:netReference/geo:hasGeometry)/geo:asWKT ?wkt }
 } }

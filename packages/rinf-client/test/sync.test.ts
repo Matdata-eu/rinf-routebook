@@ -14,6 +14,7 @@ import {
   saveWebBundle,
   swapDirectory,
   writeDatasetIndex,
+  FETCH_VERSION,
   type CountryGraph,
   type GraphProvenance,
   type Snapshot,
@@ -48,10 +49,10 @@ function era(publications: Record<string, { id: string; at: string }>, sizes: Re
 const prov = (code: string, id: string, at: string, triples: number): GraphProvenance => ({ graph: `${G}${code}`, imCode: code, imName: `IM ${code}`, datasetId: id, publishedAt: at, triples, fingerprint: `${id}|${at}|${triples}` });
 
 /** A bundle on disk as a successful fetch leaves it: meta.json with the provenance it saw. */
-async function bundle(root: string, dataset: CountryGraph, graphs: GraphProvenance[], fetchedAt = "2026-10-10T00:00:00.000Z") {
+async function bundle(root: string, dataset: CountryGraph, graphs: GraphProvenance[], fetchedAt = "2026-10-10T00:00:00.000Z", fetchVersion = FETCH_VERSION) {
   const dir = join(root, datasetFolder(dataset.code));
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "meta.json"), JSON.stringify({ country: dataset.code, name: dataset.name, imName: dataset.imName, fetchedAt, counts: { ops: 10 }, provenance: graphs, checkedAt: fetchedAt }));
+  await writeFile(join(dir, "meta.json"), JSON.stringify({ country: dataset.code, name: dataset.name, imName: dataset.imName, fetchedAt, counts: { ops: 10 }, provenance: graphs, checkedAt: fetchedAt, ...(fetchVersion ? { fetchVersion } : {}) }));
 }
 
 describe("fingerprints", () => {
@@ -96,6 +97,21 @@ describe("sync plan", () => {
     expect(again.removed).toEqual(["bel"]);
     const forced = await planSync({ endpoint: ENDPOINT, datasetsApi: API, fetchImpl, datasets: [bel], catalogue: await readCatalogue(root), force: true });
     expect(forced.fetch.map((i) => i.reason)).toEqual(["forced"]);
+  });
+
+  it("fetches again what an older version of the queries fetched, once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rbsync-"));
+    const graphs = [prov("0076", "d-76", "2026-10-01T00:00:00.000Z", 1000)];
+    await bundle(root, nor, graphs, undefined, 0);
+    await writeDatasetIndex(root);
+    const fetchImpl = era({ "0076": { id: "d-76", at: "2026-10-01T00:00:00.000Z" } }, { "0076": 1000 });
+    const plan = await planSync({ endpoint: ENDPOINT, datasetsApi: API, fetchImpl, datasets: [nor], catalogue: await readCatalogue(root) });
+    expect(plan.fetch.map((i) => [i.id, i.reason])).toEqual([["nor", "outdated"]]);
+    await bundle(root, nor, graphs, "2026-10-12T00:00:00.000Z");
+    await writeDatasetIndex(root);
+    const after = await planSync({ endpoint: ENDPOINT, datasetsApi: API, fetchImpl, datasets: [nor], catalogue: await readCatalogue(root) });
+    expect(after.fetch).toEqual([]);
+    expect(after.current).toEqual(["nor"]);
   });
 
   it("only fetches new and failed datasets when ERA cannot be asked", async () => {

@@ -1,4 +1,5 @@
 import { SparqlClient, type Row } from "./sparql.js";
+import { parseWktLineString, wktPosition } from "./wkt.js";
 import { graphProvenance, type EraOptions } from "./era.js";
 import type {
   Direction,
@@ -39,21 +40,6 @@ export function cleanLabel(label: string | undefined): string | undefined {
 }
 
 const round = (n: number, d: number) => Math.round(n * 10 ** d) / 10 ** d;
-
-/** Parse a WKT LINESTRING (optionally prefixed with a CRS IRI) into [lon, lat] pairs. */
-export function parseWktLineString(wkt: string | undefined): Array<[number, number]> | undefined {
-  const m = wkt?.match(/LINESTRING\s*\(([^)]*)\)/i);
-  if (!m) return undefined;
-  return m[1]!.split(",").map((p) => {
-    const [x, y] = p.trim().split(/\s+/).map(Number);
-    return [x!, y!] as [number, number];
-  });
-}
-
-export function parseWktPoint(wkt: string | undefined): { lon: number; lat: number } | undefined {
-  const m = wkt?.match(/POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)/i);
-  return m ? { lon: Number(m[1]), lat: Number(m[2]) } : undefined;
-}
 
 const DIRECTIONS: Record<string, Direction> = {
   [`${ERA}concepts/orientations/00`]: "normal",
@@ -134,15 +120,41 @@ export type RawResults = Record<
   Row[]
 >;
 
+/**
+ * Version of the queries and the parsing; raise it when a change means data fetched before has
+ * to be fetched again (the sync does that by itself). 2: OP and SoL geometry also read from the
+ * net reference, WKT axis order, signs and exponents normalised.
+ */
+export const FETCH_VERSION = 2;
+
+/**
+ * What decides whether Routebook can work on a dataset (see the web app's Datasets dialog):
+ * OPs with a position on the micro topology (a route needs one at each end), signals, and the
+ * length of track in kilometres to judge the number of signals by.
+ */
+export function readinessCounts(snapshot: Pick<Snapshot, "ops" | "features" | "topology">): { routableOps: number; signals: number; trackKm: number } {
+  return {
+    routableOps: snapshot.ops.filter((op) => op.points.length || op.areas.length).length,
+    signals: snapshot.features.filter((f) => f.kind === "signal").length,
+    trackKm: Math.round(snapshot.topology.netElements.reduce((s, e) => s + e.length, 0) / 1000),
+  };
+}
+
 /** Pure transformation of query rows into the snapshot model (deduplicates repeated labels etc.). */
 export function assembleSnapshot(
   r: RawResults,
-  meta: Omit<SnapshotMeta, "fetchedAt" | "counts">,
+  meta: Omit<SnapshotMeta, "fetchedAt" | "counts" | "fetchVersion">,
 ): Snapshot {
   const ops = new Map<string, OperationalPoint>();
   for (const row of r.ops) {
-    if (!row.op || ops.has(row.op)) continue;
-    const p = parseWktPoint(row.wkt);
+    if (!row.op) continue;
+    // the geometry may come on the OP or on its net reference(s): the first that gives a position wins
+    const p = wktPosition(row.wkt);
+    const had = ops.get(row.op);
+    if (had) {
+      if (had.lon === undefined && p) Object.assign(had, p);
+      continue;
+    }
     ops.set(row.op, {
       id: row.op,
       uopid: row.uopid ?? "",
@@ -175,7 +187,13 @@ export function assembleSnapshot(
 
   const sols = new Map<string, Snapshot["sols"][number]>();
   for (const row of r.sols) {
-    if (!row.sol || sols.has(row.sol) || !row.opStart || !row.opEnd) continue;
+    if (!row.sol || !row.opStart || !row.opEnd) continue;
+    const had = sols.get(row.sol);
+    if (had) {
+      // a later row with the line geometry (on the SoL or its net reference) the first one lacked
+      if (!parseWktLineString(had.wkt) && parseWktLineString(row.wkt)) had.wkt = row.wkt!;
+      continue;
+    }
     const length = num(row.length);
     sols.set(row.sol, {
       id: row.sol,
@@ -274,7 +292,7 @@ export function assembleSnapshot(
   }
 
   const snapshot: Snapshot = {
-    meta: { ...meta, fetchedAt: new Date().toISOString(), counts: {} },
+    meta: { ...meta, fetchedAt: new Date().toISOString(), fetchVersion: FETCH_VERSION, counts: {} },
     ops: [...ops.values()],
     lines: [...lines.values()],
     sols: [...sols.values()],
@@ -297,6 +315,7 @@ export function assembleSnapshot(
     features: snapshot.features.length,
     tunnels: snapshot.tunnels.length,
     geometries: Object.keys(geometry).length,
+    ...readinessCounts(snapshot),
   };
   return snapshot;
 }

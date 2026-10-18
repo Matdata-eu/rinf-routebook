@@ -9,5 +9,5 @@ PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
 SELECT ?op ?uopid ?name ?type ?wkt WHERE { GRAPH {{graph}} {
   ?op a era:OperationalPoint ; era:uopid ?uopid ; era:opName ?name .
   OPTIONAL { ?op era:opType ?type }
-  OPTIONAL { ?op geo:hasGeometry/geo:asWKT ?wkt }
+  OPTIONAL { ?op (geo:hasGeometry|era:netReference/geo:hasGeometry)/geo:asWKT ?wkt }
 } }

@@ -6,6 +6,7 @@
  */
 import type { NetRelation, OperationalPoint, SectionOfLine, Snapshot, Topology } from "./types.js";
 import { simplifyLine } from "./compact.js";
+import { parseWktLineString } from "./wkt.js";
 
 export const NETWORK_INDEX_VERSION = 1;
 
@@ -128,10 +129,8 @@ export function opRow(dataset: string, op: OperationalPoint): IndexOpRow {
 
 /** The WKT LINESTRING of a section of line as coordinates, simplified (tolerance in degrees, default about 50 m). */
 export function solRow(dataset: string, sol: SectionOfLine, tolerance = 5e-4): IndexSolRow | undefined {
-  const m = sol.wkt?.match(/LINESTRING\s*\(([^)]*)\)/i);
-  if (!m) return undefined;
-  const coords = m[1]!.split(",").map((p) => p.trim().split(/\s+/).map(Number) as [number, number]);
-  if (coords.length < 2 || coords.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) return undefined;
+  const coords = parseWktLineString(sol.wkt);
+  if (!coords || coords.length < 2) return undefined;
   return [dataset, sol.label ?? "", simplifyLine(coords, tolerance).map(([x, y]) => [r4(x), r4(y)])];
 }
 
