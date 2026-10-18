@@ -22,7 +22,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Tile proxy: layers with `"proxy": true` are fetched by the server with their keys and headers, which never reach the browser. `ESRI_API_KEY` adds Esri World Imagery this way.
 - Docker image (`ghcr.io/matdata-eu/rinf-routebook`), Docker Compose file, `.env.example` and `config.example.json`; the container fetches the datasets in `ROUTEBOOK_DATASETS` on its first start.
 - All of RINF: `routebook fetch-all` (`pnpm fetch:all`) fetches every dataset on the endpoint, one per country, with a retry and a summary; a country that fails is skipped. `ROUTEBOOK_DATASETS=all` does the same in Docker. Country datasets get English names.
-- GitHub Pages: a weekly workflow publishes the public demo with the complete RINF data and a privacy statement naming Matdata as publisher and GitHub as host (`deploy/github-pages/`); `scripts/build-static.mjs` writes the configuration of a static deployment.
+- The public demo moves to https://routebook.matdata.eu, run by Matdata from the Docker image with every RINF dataset kept current by the sync and Esri World Imagery as the background; its configuration and privacy statement are in `deploy/matdata/`. The GitHub Pages workflow and `deploy/github-pages/` are gone (a static site cannot keep itself current); `scripts/build-static.mjs` stays for static hosts.
 - GitHub workflows: CI (build, typecheck, test) and a multi-platform Docker image published on pushes to `main` and version tags.
 - Deployment guide (`docs/deployment.md`), credits, support and security policy, issue and pull request templates.
 
