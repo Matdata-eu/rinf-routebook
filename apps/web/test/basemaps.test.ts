@@ -4,8 +4,9 @@ import { absoluteTemplate, basemaps, headerTransform, loadRuntimeConfig, overlay
 const BASE = "https://rail.example/routebook/?dataset=nor";
 
 describe("basemaps", () => {
-  it("offers the key-free map and Sentinel-2 by default", () => {
-    const list = basemaps({});
+  it("offers the key-free street map by default, Sentinel-2 only when asked for", () => {
+    expect(basemaps({}).map((b) => b.id)).toEqual(["map"]);
+    const list = basemaps({ builtinBasemaps: ["map", "satellite"] });
     expect(list.map((b) => b.id)).toEqual(["map", "satellite"]);
     // only the CC BY 2016 mosaic may be used commercially; the yearly layers are non-commercial
     expect(list[1]!.source.tiles![0]).toContain("/s2cloudless_3857/");
@@ -15,17 +16,14 @@ describe("basemaps", () => {
   it("adds configured layers after the built-ins, and can hide the built-ins", () => {
     const ortho = { id: "ortho", label: "Orthophoto", tiles: ["https://x.test/{z}/{x}/{y}.jpg"], maxzoom: 21, attribution: "© Ortho" };
     const list = basemaps({ basemaps: [ortho] }, BASE);
-    // configured imagery takes the Satellite slot: the coarse built-in layer is dropped
     expect(list.map((b) => b.id)).toEqual(["map", "ortho"]);
     expect(list[1]).toMatchObject({ label: "Orthophoto", aerial: true, source: { tiles: ["https://x.test/{z}/{x}/{y}.jpg"], maxzoom: 21, attribution: "© Ortho" } });
     expect(basemaps({ basemaps: [ortho], builtinBasemaps: false }).map((b) => b.id)).toEqual(["ortho"]);
     expect(basemaps({ basemaps: [ortho], builtinBasemaps: ["map"] }).map((b) => b.id)).toEqual(["map", "ortho"]);
-    // ... unless it is asked for by id; a configured plain map keeps it
     expect(basemaps({ basemaps: [ortho], builtinBasemaps: ["map", "satellite"] }).map((b) => b.id)).toEqual(["map", "satellite", "ortho"]);
-    expect(basemaps({ basemaps: [{ ...ortho, id: "plan", imagery: false }] }).map((b) => b.id)).toEqual(["map", "satellite", "plan"]);
     // a configured id replaces the built-in one
-    expect(basemaps({ basemaps: [{ ...ortho, id: "map", imagery: false }] }).map((b) => b.label)).toEqual(["Satellite", "Orthophoto"]);
-    // never an empty switch
+    expect(basemaps({ basemaps: [{ ...ortho, id: "map", imagery: false }] }).map((b) => b.label)).toEqual(["Orthophoto"]);
+    // never an empty choice
     expect(basemaps({ builtinBasemaps: false }).map((b) => b.id)).toEqual(["map"]);
   });
 
@@ -37,14 +35,17 @@ describe("basemaps", () => {
     expect(absoluteTemplate("//cdn.test/{z}", BASE)).toBe("https://cdn.test/{z}");
   });
 
-  it("builds overlays, hidden unless marked visible", () => {
-    const list = overlays({ overlays: [{ id: "lines", tiles: ["https://x.test/wms?bbox={bbox-epsg-3857}"], opacity: 0.6, visible: true }, { id: "parcels", tiles: ["https://y.test/{z}/{x}/{y}.png"] }] });
-    expect(list.map((o) => [o.id, o.visible, o.aerial])).toEqual([["lines", true, false], ["parcels", false, false]]);
-    expect(list[0]!.paint).toEqual({ "raster-opacity": 0.6 });
+  it("offers OpenRailwayMap, then the configured overlays, hidden unless marked visible", () => {
+    const list = overlays({ overlays: [{ id: "lines", tiles: ["https://x.test/wms?bbox={bbox-epsg-3857}"], opacity: 0.6, visible: true, description: "Catenary" }, { id: "parcels", tiles: ["https://y.test/{z}/{x}/{y}.png"] }] });
+    expect(list.map((o) => [o.id, o.visible, o.aerial])).toEqual([["orm", false, false], ["lines", true, false], ["parcels", false, false]]);
+    expect(list[0]!.source.tiles![0]).toContain("tiles.openrailwaymap.org/standard/");
+    expect(list[0]!.source.attribution).toContain("OpenRailwayMap");
+    expect(list[1]).toMatchObject({ paint: { "raster-opacity": 0.6 }, description: "Catenary" });
+    expect(overlays({ builtinOverlays: false }).map((o) => o.id)).toEqual([]);
   });
 
   it("picks by id, then the configured default, and falls back sensibly", () => {
-    const plain = basemaps({});
+    const plain = basemaps({ builtinBasemaps: ["map", "satellite"] });
     expect(pickBasemap(plain, null).id).toBe("map");
     expect(pickBasemap(plain, "nonsense").id).toBe("map");
     expect(pickBasemap(plain, null, "satellite").id).toBe("satellite");

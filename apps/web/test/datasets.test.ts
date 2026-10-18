@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { atlasLink, datasetsSummary, examplesFor, loadCatalogue, loadDatasets, loadable, parseCatalogue, pickDataset, provenanceText, rinfAttribution } from "../src/datasets.js";
+import { atlasLink, datasetsSummary, examplesFor, loadCatalogue, loadDatasets, loadable, parseCatalogue, pickDataset, provenanceText, readiness, rinfAttribution } from "../src/datasets.js";
 
 const list = [
   { id: "bel", name: "Belgium" },
@@ -75,5 +75,31 @@ describe("datasets", () => {
     expect(atlasLink("https://atlas.example.org/", graphs.slice(0, 1))).toBe("https://atlas.example.org/?ds=era:graph/0076");
     expect(atlasLink(false, graphs)).toBeUndefined();
     expect(atlasLink(undefined, [])).toBeUndefined();
+  });
+});
+
+describe("readiness", () => {
+  const norway = { fetchedAt: "2026-10-17T00:00:00.000Z", counts: { ops: 734, netElements: 7759, netRelations: 12884, routableOps: 734, signals: 5291, trackKm: 5322 } };
+
+  it("is ready with OPs on the tracks and about as many signals as Norway", () => {
+    expect(readiness(norway).level).toBe("ready");
+    expect(readiness(norway).detail).toContain("5,291 signals on 5,322 km");
+  });
+
+  it("warns when no route is possible, and says why", () => {
+    expect(readiness({ ...norway, counts: { ...norway.counts, netElements: 0 } })).toMatchObject({ level: "unusable", label: "No track network" });
+    expect(readiness({ ...norway, counts: { ...norway.counts, netRelations: 0 } })).toMatchObject({ level: "unusable", label: "Tracks not connected" });
+    expect(readiness({ ...norway, counts: { ...norway.counts, routableOps: 0 } })).toMatchObject({ level: "unusable", label: "OPs not on the track network" });
+    // data fetched before the catalogue counted them: the network index tells
+    const { routableOps: _r, ...older } = norway.counts;
+    expect(readiness({ ...norway, counts: older }, 0).level).toBe("unusable");
+  });
+
+  it("is not green with few signals, or before they are counted", () => {
+    expect(readiness({ ...norway, counts: { ...norway.counts, signals: 400 } })).toMatchObject({ level: "limited", label: "Few signals" });
+    expect(readiness({ ...norway, counts: { ...norway.counts, signals: 0 } })).toMatchObject({ level: "limited", label: "No signals" });
+    const { signals: _s, ...older } = norway.counts;
+    expect(readiness({ ...norway, counts: older }, 734).level).toBe("unknown");
+    expect(readiness({ status: "pending" }).level).toBe("unknown");
   });
 });

@@ -6,12 +6,17 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Pick a route with clicks: the first click on an operational point sets the origin, the second the destination; with a route on the map, the next click starts a new route from there. A card on hover says what a click will do; the From/To popup is gone.
+- Operational points without a position on the track network (no net reference to a linear element) are drawn grey and faint, rank last in the search and cannot be an end of a route.
+- Whether Routebook can work on a dataset: the catalogue counts `routableOps`, `signals` and `trackKm`, and the Datasets dialog has a **Routing** column (Ready, Few signals, or a warning with the reason no route is possible). A dataset is only green with operational points on the tracks and at least 0.5 signals per km of track. The Datasets button, the Network picker and the start panel warn about datasets that cannot route.
+- A **Help** dialog (the **?** button) with a short manual, as in RINF Atlas: choosing a route, how the route is found, the routebook, the views, and what RINF must contain for Routebook to work.
+- Map layers as in RINF Atlas: a **Map layers** menu by the zoom buttons with the backgrounds and overlays, including **OpenRailwayMap** in the Map and the Drive view (`builtinOverlays`). Layer `description`s show in the menu.
+
 - Routes across networks: the catalogue writer derives **border links** between datasets (`index/borders.json`, `routebook link`): the same border point declared by both infrastructure managers (same UOPID), else border points within 300 m, each with the element end that faces out of its network. A route between two datasets loads every dataset on the chain of links between them (up to six), joins their topologies at the links and gets an **Infrastructure manager change** item (quality derived) at each; the footer and the print list every dataset used. The Datasets dialog shows the links per dataset and the border points without a partner.
 - The app works across networks: a **network index** (`data/web/index/ops.json` and `sols.json`, tens of KB per country, written with the catalogue and carried as `index.json` in every bundle) lets the map and the search cover every fetched dataset at once, and a dataset's bundle is only loaded when a route needs it (up to six engines stay in memory). The **Network** picker and `?dataset=` narrow the view instead of reloading; `?dataset=all` shows everything; the Datasets dialog has a **Show** button per dataset; URL codes carry the dataset (`NOOSL@nor`) when a UOPID exists in several. Routes between two networks are announced for the next release.
 - The data keeps itself current: `routebook sync` compares what ERA publishes (dataset explorer and triple counts, as fingerprints) with the catalogue and fetches only the datasets that are new, changed or failed last time, one at a time, writing each bundle next to the old one and swapping it in when complete. The server runs it as a child process when `ROUTEBOOK_SYNC_MINUTES` is set (60 in the image; the container no longer blocks its start on the first fetch), the catalogue gains the statuses `stale` (newer data published, with what ERA publishes now) and `pending` (not fetched yet), which the Datasets dialog and button show, `GET /healthz` reports the datasets' state and the sync, and `sync --once` / `--force` serve cron jobs and `ROUTEBOOK_REFRESH`. Bundles are written with precompressed `.gz` and `.br` parts, which the server sends as they are, and every file carries an `ETag`. New guide: `docs/datasets.md`.
 - Dataset provenance, modelled on RINF Atlas: `routebook fetch` records what ERA published for each named graph (infrastructure manager, dataset id, file name, publication date, triple count, fingerprint) from the dataset explorer API and the repository (`meta.provenance`, `ROUTEBOOK_DATASETS_API` / `--datasets-api`). `datasets.json` becomes a catalogue with a status per dataset (loaded, failed with the error while the previous data stays on offer, removed from ERA) and when the endpoint was last checked; `routebook index` rebuilds it. The web app shows a **Datasets** button (network, ERA publication date, loaded/listed count) that opens a dialog listing every dataset with its publication, fetch time, status and a link into RINF Atlas (`atlasUrl`), and prints the publication behind every routebook in the footer.
 - Demo disclaimer in the app: a hazard-striped banner, a notice to acknowledge on the first visit (again when the wording changes) and a stamp on printed routebooks, saying that this is a demo, not for operational use, and that the RINF data is shown as ERA publishes it without warranty. `disclaimer` in the configuration names the publisher, changes the wording or switches it off. A code of conduct for the project.
-- A configured imagery background (for example Esri World Imagery through `ESRI_API_KEY`) takes the place of the coarse built-in Satellite layer; `builtinBasemaps: ["map", "satellite"]` keeps it.
 
 - Any RINF country or infrastructure manager, not only Norway:
   - `routebook datasets` lists the named graphs on the endpoint with their countries.
@@ -30,6 +35,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- The street map is the default background, styled as in RINF Atlas (also in the dark theme), and the public instance opens on it; its Esri aerial view is one click away. The coarse Sentinel-2 background is no longer offered unless `builtinBasemaps` names it.
+- The From/To fields stay on one row: the status line sits under them, so a message no longer pushes **Clear** to a line of its own.
+- The sync fetches every dataset once more after this release (`outdated`), to pick up the geometry and the counts below.
 - The web app follows the MatData design system: Barlow (bundled, no font requests to third parties), MatData colours, spacing, radii and shadows, the junction mark beside the name and as favicon, sentence-case labels, segmented view and background switches, a MatData-blue route with signal amber for the selected item, and SignalStatus lamps for dataset states in the Datasets dialog. A dark theme follows the system setting, with a switch in the header that is remembered; the street map turns dark with it, printed routebooks stay light. The name is written as the MatData wordmark RouteBook ("Book" in blue); a one-word camel-case `title` is drawn the same way.
 - The optional aerial background is configured at runtime (`config.json` or `ESRI_API_KEY`) instead of `VITE_*` variables in `apps/web/.env.local`.
 - The server (`scripts/serve.mjs`) also serves `config.json`, `datasets.json`, the data bundles from the data folder and `/healthz`, sends cache and security headers, and listens on `HOST` / `PORT`.
@@ -57,6 +65,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
   - The schematic is drawn with the heuristic layout first and replaced by the solved layout, computed in a Web Worker.
   - The OP names stay at the top and a bottom band with the line, speed (km/h), gradient (‰) and the km ruler stays at the bottom while scrolling vertically; tunnels are drawn as a band along the route, level crossings as two bars across it, and signals are coloured by type; main signals (home, intermediate, exit, block) are named at every zoom, the others from zoom 2.
 - CLI: `routebook bundle` / `fetch` write `switches.json` (classified on full-resolution geometry); `pnpm bundle:nor`.
+
+### Fixed
+
+- Belgium's operational points and sections of line were missing from the map: Infrabel publishes their geometry on the net reference, which Routebook did not read. Both places are read now, as in RINF Atlas, and WKT is normalised (CRS IRI, lat/lon order, plus signs, exponents, Z values).
 
 ## [0.1.0] - 2026-10-13
 

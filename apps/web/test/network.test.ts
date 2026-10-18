@@ -71,7 +71,7 @@ describe("network index in the browser", () => {
     expect(opsBounds([])).toBeUndefined();
     const ops = opsGeoJson(net);
     expect(ops.features).toHaveLength(4);
-    expect(ops.features[0]!.properties).toEqual({ key: "nor/NOOSL", dataset: "nor", name: "Oslo S", uopid: "NOOSL", station: 1 });
+    expect(ops.features[0]!.properties).toEqual({ key: "nor/NOOSL", dataset: "nor", name: "Oslo S", uopid: "NOOSL", station: 1, routable: 1 });
     expect(solsGeoJson(net).features.map((f) => f.properties.dataset)).toEqual(["nor", "swe"]);
   });
 

@@ -24,6 +24,8 @@ export interface Basemap {
 export interface LayerConfig {
   id: string;
   label?: string;
+  /** One line under the label in the Map layers menu. */
+  description?: string;
   /**
    * Tile URL templates: {z}/{x}/{y}, {quadkey} or {bbox-epsg-3857} (WMS GetMap).
    * Relative URLs (e.g. the server's proxy, `tiles/<id>/{z}/{x}/{y}`) resolve against the app.
@@ -53,8 +55,13 @@ export interface RuntimeConfig {
   title?: string;
   /** Dataset opened when the URL has none, e.g. "nor". */
   defaultDataset?: string;
-  /** Built-in backgrounds to offer: true (default) for all, false for none, or a list of ids ("map", "satellite"). */
+  /**
+   * Built-in backgrounds to offer: true (default) for the street map, false for none, or a list of
+   * ids ("map", and "satellite" for the coarse Sentinel-2 mosaic, which is only offered when named).
+   */
   builtinBasemaps?: boolean | string[];
+  /** Built-in overlays: true (default) for OpenRailwayMap, false for none, or a list of ids ("orm"). */
+  builtinOverlays?: boolean | string[];
   /** Background opened when the URL has none. */
   defaultBasemap?: string;
   basemaps?: LayerConfig[];
@@ -74,7 +81,10 @@ export interface RuntimeConfig {
   disclaimer?: DisclaimerConfig | boolean;
 }
 
-/** Plain map: OSM, greyed out so the railway overlay stands out. Fine for a demo, not for heavy production use. */
+/**
+ * Plain map: OSM, slightly greyed so the railway lines stand out, as in RINF Atlas. Fine for a
+ * demo, not for heavy production use (OSM's tile usage policy).
+ */
 const osm: Basemap = {
   id: "map",
   label: "Streets",
@@ -85,13 +95,14 @@ const osm: Basemap = {
     maxzoom: 19,
     attribution: `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`,
   },
-  paint: { "raster-saturation": -0.85, "raster-opacity": 0.75 },
+  paint: { "raster-saturation": -0.35 },
   aerial: false,
 };
 
 /**
  * Sentinel-2 cloudless 2016 by EOX: the only EOX year under CC BY 4.0 (commercial use allowed
- * with attribution; 2017+ are CC BY-NC-SA). 10 m pixels: good for orientation, too coarse to see tracks.
+ * with attribution; 2017+ are CC BY-NC-SA). 10 m pixels: good for orientation, too coarse to see
+ * tracks, so it is only offered when `builtinBasemaps` names it.
  */
 const s2cloudless: Basemap = {
   id: "satellite",
@@ -108,6 +119,25 @@ const s2cloudless: Basemap = {
 };
 
 export const BUILTIN_BASEMAPS: readonly Basemap[] = [osm, s2cloudless];
+
+/** OpenRailwayMap's standard style: the railway infrastructure from OpenStreetMap, over any background (as in RINF Atlas). */
+const orm: Basemap & { visible: boolean; description: string } = {
+  id: "orm",
+  label: "OpenRailwayMap",
+  description: "Railway infrastructure from OpenStreetMap, drawn over the background",
+  source: {
+    type: "raster",
+    tiles: ["a", "b", "c"].map((s) => `https://${s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png`),
+    tileSize: 256,
+    maxzoom: 19,
+    attribution: `Rail overlay: © <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a> (CC-BY-SA 2.0)`,
+  },
+  paint: {},
+  aerial: false,
+  visible: false,
+};
+
+export const BUILTIN_OVERLAYS: readonly (Basemap & { visible: boolean; description: string })[] = [orm];
 
 const aerialPaint: RasterLayerSpecification["paint"] = { "raster-saturation": -0.25, "raster-brightness-max": 0.85 };
 
@@ -146,24 +176,25 @@ const valid = (c: LayerConfig | undefined): c is LayerConfig =>
   !!c && typeof c.id === "string" && c.id.trim() !== "" && Array.isArray(c.tiles) && c.tiles.some((t) => typeof t === "string" && t.trim() !== "");
 
 /**
- * The backgrounds on offer: the built-ins that are switched on, then the configured ones
- * (a configured id replaces a built-in). A configured imagery background (Esri World Imagery
- * through ESRI_API_KEY, an orthophoto service, ...) takes the place of the coarse built-in
- * Satellite layer, which then only stays when `builtinBasemaps` names it.
+ * The backgrounds on offer: the built-in street map (and the coarse Sentinel-2 mosaic when
+ * `builtinBasemaps` names it), then the configured ones (a configured id replaces a built-in):
+ * Esri World Imagery through ESRI_API_KEY, an orthophoto service, ...
  */
 export function basemaps(config: RuntimeConfig, base = "http://localhost/"): Basemap[] {
   const own = (config.basemaps ?? []).filter(valid).map((c) => layerFromConfig(c, { base }));
   const keep = config.builtinBasemaps ?? true;
-  const ownImagery = own.some((o) => o.aerial);
-  const wanted = (b: Basemap) => (keep === true ? !(ownImagery && b.id === "satellite") : Array.isArray(keep) && keep.includes(b.id));
+  const wanted = (b: Basemap) => (keep === true ? b.id === "map" : Array.isArray(keep) && keep.includes(b.id));
   const builtins = BUILTIN_BASEMAPS.filter((b) => wanted(b) && !own.some((o) => o.id === b.id));
   const list = [...builtins, ...own];
   return list.length ? list : [osm];
 }
 
-/** Configured overlays, drawn between the background and the railway lines. */
-export function overlays(config: RuntimeConfig, base = "http://localhost/"): Array<Basemap & { visible: boolean }> {
-  return (config.overlays ?? []).filter(valid).map((c) => ({ ...layerFromConfig(c, { base, overlay: true }), visible: c.visible === true }));
+/** The overlays, drawn between the background and the railway lines: OpenRailwayMap, then the configured ones. */
+export function overlays(config: RuntimeConfig, base = "http://localhost/"): Array<Basemap & { visible: boolean; description?: string }> {
+  const own = (config.overlays ?? []).filter(valid).map((c) => ({ ...layerFromConfig(c, { base, overlay: true }), visible: c.visible === true, ...(c.description ? { description: c.description } : {}) }));
+  const keep = config.builtinOverlays ?? true;
+  const builtins = BUILTIN_OVERLAYS.filter((o) => (keep === true || (Array.isArray(keep) && keep.includes(o.id))) && !own.some((x) => x.id === o.id));
+  return [...builtins, ...own];
 }
 
 /** Pick by id (the `base` URL parameter, then the configured default); "aerial" falls back to the first imagery. */

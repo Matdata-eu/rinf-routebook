@@ -139,6 +139,45 @@ export function provenanceText(d: Pick<DatasetInfo, "name" | "graphs" | "publish
   return parts.join(", ");
 }
 
+/**
+ * Signals per kilometre of track a dataset needs before it counts as ready: Norway, which
+ * publishes every main signal, has about one per km; half of that still gives a useful routebook.
+ */
+export const MIN_SIGNALS_PER_KM = 0.5;
+
+export type ReadinessLevel = "ready" | "limited" | "unusable" | "unknown";
+
+/** Whether Routebook can work on a dataset, and why not. */
+export interface Readiness {
+  level: ReadinessLevel;
+  /** One short label for the dialog. */
+  label: string;
+  /** What is missing in RINF, in a sentence. */
+  detail?: string;
+}
+
+/**
+ * Can Routebook route on a dataset, judged from what it published: a micro topology (linear
+ * elements and the net relations joining them), operational points placed on it (a route needs
+ * one at each end) and signals (a routebook without them says little). `routableOps` comes from
+ * the network index when the catalogue does not have it (data fetched by an older version).
+ */
+export function readiness(d: Pick<DatasetInfo, "counts" | "fetchedAt" | "status">, routableOps?: number): Readiness {
+  const c = d.counts ?? {};
+  if (!d.fetchedAt && !c.ops) return { level: "unknown", label: "Not fetched yet" };
+  if (c.netElements === 0) return { level: "unusable", label: "No track network", detail: "RINF has no micro topology (linear elements) for this dataset, so there is nothing to route on." };
+  if (c.netRelations === 0) return { level: "unusable", label: "Tracks not connected", detail: "RINF has no net relations between the linear elements, so a route cannot pass from one piece of track to the next." };
+  const placed = c.routableOps ?? routableOps;
+  if (placed === 0) return { level: "unusable", label: "OPs not on the track network", detail: "No operational point has a position on the track network (a net reference to a linear element), so no route can start or end in this dataset." };
+  const signals = c.signals;
+  const km = c.trackKm;
+  if (signals === undefined || !km) return { level: "unknown", label: "Signals not counted", detail: "Fetched by an older version of Routebook; the next update counts the signals." };
+  const perKm = signals / km;
+  const density = `${signals.toLocaleString()} signals on ${km.toLocaleString()} km of track`;
+  if (perKm < MIN_SIGNALS_PER_KM) return { level: "limited", label: signals ? "Few signals" : "No signals", detail: `Routes work, but ${density}: the routebook will miss most signals (ready from ${MIN_SIGNALS_PER_KM} per km).` };
+  return { level: "ready", label: "Ready", detail: `${density}${placed !== undefined ? `, ${placed.toLocaleString()} operational points on the track network` : ""}.` };
+}
+
 /** The default public RINF Atlas instance (open source, by Matdata); set `atlasUrl` to false to drop the links. */
 export const DEFAULT_ATLAS_URL = "https://rinf-atlas.matdata.eu";
 

@@ -52,6 +52,17 @@ The catalogue is what the Datasets dialog and `GET /healthz` show. It is rewritt
 | `failed` | the last fetch failed (`error`); the previous bundle, if any, stays on offer | Update failed |
 | `removed` | ERA no longer publishes the dataset; the bundle stays until it is fetched again or deleted | Removed from ERA |
 
+Each dataset also says whether Routebook can work on it. `counts` holds, besides the sizes, `routableOps` (operational points with a net reference to a linear element: a route needs one at each end), `signals` and `trackKm` (length of all linear elements). The Datasets dialog turns them into a **Routing** column:
+
+| Routing | When |
+|---|---|
+| Ready (green) | linear elements and net relations, operational points on them, and at least 0.5 signals per km of track (Norway has about one) |
+| Few signals / No signals (amber) | routes work, but the routebook will miss most signals |
+| ⚠ No track network, Tracks not connected, OPs not on the track network (red) | no route is possible; the dialog says which |
+| Signals not counted | data fetched before the counts existed; the next fetch adds them |
+
+Operational points without a position on the track network are drawn grey on the map and cannot be picked. In October 2026, for example, Belgium (Infrabel) and Austria (ÖBB) publish operational points and sections of line with coordinates, but no linear elements or net relations, so Routebook shows them but cannot route there.
+
 The Datasets button in the app shows the network's ERA publication date and, with several datasets, how many have data (`27/28 datasets`), in red when a fetch failed and in amber while updates are on their way. The footer and the printed routebook name the publication behind the route.
 
 ## Keeping the data current: `routebook sync`
@@ -60,7 +71,7 @@ The container keeps its own data current; there is no scheduled rebuild. The ser
 
 1. reads the dataset explorer once and the triple count of every graph of the datasets to keep (`ROUTEBOOK_DATASETS`: ids, or `all` for every dataset on the endpoint; without it, the datasets already in the catalogue);
 2. compares the fingerprints with the catalogue and records what it found: new datasets become `pending`, changed ones `stale`, and, with `all`, datasets gone from the endpoint `removed`;
-3. fetches only the datasets that are new, changed or failed last time, one after the other (the public endpoint is shared), with one retry each;
+3. fetches only the datasets that are new, changed, failed last time or fetched by an older version of Routebook's queries (`outdated`: the bundle records the `fetchVersion` it was made with, and a release that reads more from RINF raises it, so every dataset is fetched again once), one after the other (the public endpoint is shared), with one retry each;
 4. writes each bundle into `data/web/<id>.tmp` and swaps it into place when complete, so the server never serves a half-written bundle; a fetch that fails leaves the previous bundle and records the error;
 5. sleeps `ROUTEBOOK_SYNC_MINUTES` and checks again. Graphs whose fingerprint cannot be read (explorer or repository down) count as unchanged, so an outage never triggers a refetch.
 

@@ -83,9 +83,9 @@ Data quality differs a lot per country: Routebook needs the micro topology (`era
 
 ## Map layers
 
-Out of the box the app offers two backgrounds that need no key and allow commercial use: **Streets** (OpenStreetMap, fine for testing, but see the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) for production) and **Satellite** (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0).
+The map has the same layers as [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas), under a **Map layers** button next to the zoom buttons. Out of the box that is the **Streets** background (OpenStreetMap, fine for testing, but see the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/) for production) and the **OpenRailwayMap** overlay (railway infrastructure from OpenStreetMap, CC-BY-SA, off until ticked; shown in the Map and the Drive view). Neither needs a key. A coarse **Satellite** background (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0) is built in too, but only offered when `builtinBasemaps` names it.
 
-Many organisations have sharper imagery of their own, usually behind an API key. A configured imagery background takes the place of the built-in Satellite layer (which only stays when `builtinBasemaps` names it), so the map offers one aerial button, the sharp one. Add it in `config/config.json` (see [`config.example.json`](../config.example.json)):
+Many organisations have sharper imagery of their own, usually behind an API key. Add it in `config/config.json` (see [`config.example.json`](../config.example.json)):
 
 ```json
 {
@@ -125,12 +125,13 @@ The proxy only fetches the layers in the configuration, and with `bounds` only t
 
 ### Layer fields
 
-`basemaps` appear as buttons next to the built-in backgrounds; one is shown at a time. `overlays` are toggled on and off on top of the background, under the railway lines.
+`basemaps` appear in the Map layers menu under **Background**, after the built-in street map; one is shown at a time. `overlays` are listed after OpenRailwayMap and toggled on and off on top of the background, under the railway lines; `description` adds a line under the label.
 
 | Field | Meaning |
 |---|---|
 | `id` | Letters, digits, `-` and `_`. Used in the URL (`?base=ortho`, `?layers=catenary`). A basemap with the id `map` or `satellite` replaces that built-in. |
-| `label` | Button text (default: the id). |
+| `label` | Name in the Map layers menu (default: the id). |
+| `description` | One line under the label in the menu. |
 | `tiles` | One or more URL templates (several are used in turn). Placeholders: `{z}`, `{x}`, `{y}`, `{quadkey}` (Bing style) and `{bbox-epsg-3857}` (WMS `GetMap` in Web Mercator). WMTS works through its REST/KVP template, e.g. `.../{z}/{y}/{x}.png`. |
 | `tileSize` | `256` (default) or `512`. |
 | `minzoom`, `maxzoom` | Zoom range of the service (default maxzoom 19); the map zooms further by scaling the last level. |
@@ -151,7 +152,8 @@ Other top-level fields:
 | `title` | App title in the header and the browser tab. A one-word camel-case name is drawn as a MatData wordmark with its last part in blue (`RouteBook`). |
 | `defaultDataset` | Dataset the map and the search are narrowed to when the URL has none, e.g. `"nor"`; without it the app opens on every dataset. |
 | `defaultBasemap` | Background opened when the URL has none, e.g. `"ortho"`. |
-| `builtinBasemaps` | `true` (default), `false` to hide Streets and Satellite, or a list such as `["map"]`. |
+| `builtinBasemaps` | `true` (default) for Streets, `false` for none, or a list such as `["map", "satellite"]` to add the coarse Sentinel-2 background. |
+| `builtinOverlays` | `true` (default) for OpenRailwayMap, `false` for none, or a list such as `["orm"]`. |
 | `glyphs` | Font URL template for the station labels (MapLibre `glyphs`); the default is the MapLibre demo server. Self-host it for production or offline use. |
 | `privacy` | Privacy statement, see [Privacy statement](#privacy-statement). |
 | `examples` | Example routes on the start panel per dataset: `{"bel": [{"from": "BEBRU", "to": "BEANT", "label": "Brussels → Antwerp"}]}`. |
