@@ -1,0 +1,29 @@
+# The public instance, https://routebook.matdata.eu, run by Matdata next to RINF Atlas.
+#   cp .env.example .env     # ESRI_API_KEY
+#   docker compose up -d     # http://127.0.0.1:8081, put your reverse proxy with TLS in front
+# Every RINF dataset is fetched and kept current by the container's own sync (see docs/datasets.md);
+# the first full fetch takes a few hours, during which the app lists the datasets as "Fetching".
+services:
+  routebook:
+    image: ghcr.io/matdata-eu/rinf-routebook:${ROUTEBOOK_VERSION:-latest}
+    container_name: routebook
+    ports:
+      - "127.0.0.1:${ROUTEBOOK_PORT:-8081}:8080"
+    environment:
+      ROUTEBOOK_DATASETS: all
+      ROUTEBOOK_SYNC_MINUTES: ${ROUTEBOOK_SYNC_MINUTES:-60}
+      # the largest networks (Germany, France) need more than Node's default heap while they are fetched
+      NODE_OPTIONS: --max-old-space-size=6144
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - routebook-data:/data
+      - ./config.json:/config/config.json:ro
+      - ./privacy.html:/config/privacy.html:ro
+    restart: unless-stopped
+    # uncomment once the first full sync has shown its peak memory (docker stats, or the sync log):
+    # mem_limit: 8g
+
+volumes:
+  routebook-data:

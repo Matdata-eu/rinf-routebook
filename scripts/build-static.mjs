@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Static deployment (e.g. GitHub Pages): writes the runtime configuration that the server
+// Static deployment (any static host, no server): writes the runtime configuration that the server
 // (scripts/serve.mjs) would otherwise serve into the built app, as plain files:
 //   <dist>/config.json    the configuration as the browser gets it
 //   <dist>/privacy.html   the privacy statement, when it is a text or a file

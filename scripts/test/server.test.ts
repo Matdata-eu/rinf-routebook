@@ -187,10 +187,10 @@ describe("server", () => {
   });
 });
 
-describe("static build (GitHub Pages)", () => {
+describe("static build", () => {
   it("writes config.json without proxied layers, privacy.html and datasets.json", async () => {
     const repo = await mkdtemp(join(tmpdir(), "rbstatic-"));
-    await writeFile(join(repo, "privacy.html"), "<h1>Privacy statement</h1><p>Published by Matdata, hosted on GitHub Pages.</p>");
+    await writeFile(join(repo, "privacy.html"), "<h1>Privacy statement</h1><p>Published and hosted by Example.</p>");
     await writeFile(
       join(repo, "config.json"),
       JSON.stringify({
@@ -210,13 +210,16 @@ describe("static build (GitHub Pages)", () => {
     expect(JSON.parse(written)).toMatchObject({ title: "Demo", privacy: { label: "Privacy", url: "privacy.html" }, basemaps: [{ id: "open" }] });
     const page = await readFile(join(dist, "privacy.html"), "utf8");
     expect(page).toContain("<!doctype html>");
-    expect(page).toContain("hosted on GitHub Pages");
+    expect(page).toContain("hosted by Example");
     expect(JSON.parse(await readFile(join(dist, "datasets.json"), "utf8"))).toEqual({ version: 2, datasets: [{ id: "bel", name: "Belgium", ops: 7, status: "loaded", counts: { ops: 7 } }] });
   });
 
-  it("ships the Matdata privacy statement for the public demo", () => {
-    const cfg = loadConfig({ cwd: join(__dirname, "..", ".."), log: quiet, env: { ROUTEBOOK_CONFIG_FILE: "deploy/github-pages/config.json" } });
+  it("ships the configuration of the public instance with the Matdata privacy statement", () => {
+    const cfg = loadConfig({ cwd: join(__dirname, "..", ".."), log: quiet, env: { ROUTEBOOK_CONFIG_FILE: "deploy/matdata/config.json", ESRI_API_KEY: "k" } });
     expect(cfg.privacy.html).toMatch(/Matdata/);
-    expect(cfg.privacy.html).toMatch(/GitHub Pages/);
+    expect(cfg.privacy.html).toMatch(/routebook\.matdata\.eu/);
+    expect(cfg.defaultBasemap).toBe("aerial");
+    expect(cfg.basemaps.map((b: { id: string }) => b.id)).toEqual(["aerial"]);
+    expect((cfg as { disclaimer?: unknown }).disclaimer).toEqual({ publisher: "Matdata" });
   });
 });

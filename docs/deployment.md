@@ -10,7 +10,8 @@ Routebook is one small Node.js server. It serves the web app, the RINF data bund
 - [All settings](#all-settings)
 - [Without Docker](#without-docker)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
-- [GitHub Pages (static)](#github-pages-static)
+- [Static hosting](#static-hosting)
+- [The public instance](#the-public-instance)
 
 ## Docker Compose
 
@@ -230,7 +231,7 @@ Add `ROUTEBOOK_SYNC_MINUTES=60` (and `ROUTEBOOK_DATASETS`) to have the server ke
 
 The server reads `config.json` from the working directory (or `ROUTEBOOK_CONFIG_FILE`). `pnpm dev:web` uses the same `config.json` at the repository root, so you can try map layers while developing.
 
-The built app (`apps/web/dist`) can also be put on any static host: see [GitHub Pages (static)](#github-pages-static).
+The built app (`apps/web/dist`) can also be put on any static host: see [Static hosting](#static-hosting).
 
 ## Behind a reverse proxy
 
@@ -244,17 +245,17 @@ location /routebook/ {
 
 Responses for hashed assets carry long cache headers, the rest `no-cache` with an `ETag`, so browsers revalidate and only download a bundle again after a new fetch. The data bundles are a few MB per country and are served precompressed (brotli or gzip, whichever the browser accepts), so the proxy need not compress them again; pass the `Accept-Encoding` header through.
 
-## GitHub Pages (static)
+## Static hosting
 
-The public demo, https://matdata-eu.github.io/rinf-routebook/, is published by [Matdata](https://matdata.eu) with the workflow [`.github/workflows/pages.yml`](../.github/workflows/pages.yml). Every Monday, and when run by hand, it:
+The built app can run without the server, on any static host, with the data fetched beforehand:
 
-1. fetches every RINF dataset on the endpoint (`routebook fetch-all`; a country that fails is reported in the run summary and left out),
-2. builds the web app, which copies the data bundles into `apps/web/dist`,
-3. writes the static `config.json`, `privacy.html` and `datasets.json` with `node scripts/build-static.mjs apps/web/dist`, from [`deploy/github-pages/config.json`](../deploy/github-pages/config.json),
-4. deploys the result to GitHub Pages.
+1. fetch the datasets (`routebook fetch --dataset NOR`, or `routebook sync --once --datasets all`),
+2. build the web app, which copies the data bundles into `apps/web/dist`,
+3. write the static `config.json`, `privacy.html` and `datasets.json` with `node scripts/build-static.mjs apps/web/dist`, from your `config.json`,
+4. upload `apps/web/dist`.
 
-The privacy statement of the demo is [`deploy/github-pages/privacy.html`](../deploy/github-pages/privacy.html): Matdata as the publisher, GitHub as the host, and the map tile and font providers the browser contacts. Keep it up to date when the site changes (new map layers, analytics, ...).
+A static site has no server, so there is no tile proxy (layers with `"proxy": true` are left out, and everything in `config.json` is public: do not put keys in it), no sync (the data is as old as the last build) and no `/healthz`. Check that publishing the RINF data fits ERA's reuse conditions for your use.
 
-To run it in a fork: set **Settings > Pages > Source** to **GitHub Actions**, replace the files in `deploy/github-pages/` with your own (your name in the privacy statement), and run the workflow. To try a few countries first, run it by hand with e.g. `NOR,BEL` as datasets.
+## The public instance
 
-A static site has no server, so there is no tile proxy: layers with `"proxy": true` are left out, and everything in `config.json` is public. Do not put keys in it. Also check that publishing the RINF data fits ERA's reuse conditions for your use.
+The public demo, <https://routebook.matdata.eu>, is published and hosted by [Matdata](https://matdata.eu) with the configuration in [`deploy/matdata/`](../deploy/matdata/README.md): the Docker image with every RINF dataset kept current by the sync, Esri World Imagery as the aerial background, the disclaimer and a [privacy statement](../deploy/matdata/privacy.html) naming Matdata as publisher and host. It is a complete, working example of a deployment.

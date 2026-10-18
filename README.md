@@ -25,7 +25,7 @@ It works for any network the [ERA knowledge graph](https://graph.data.era.europa
 - **Your own privacy statement**, linked in the footer.
 - **Docker image** and Docker Compose file; a CLI to fetch data and print routebooks in the terminal.
 
-**Try it:** the public demo at **https://matdata-eu.github.io/rinf-routebook/** has the complete RINF data, refreshed every week. It is published by [Matdata](https://matdata.eu) and hosted on GitHub Pages ([privacy statement](https://matdata-eu.github.io/rinf-routebook/privacy.html)).
+**Try it:** the public demo at **https://routebook.matdata.eu** has the complete RINF data, kept current every hour, with Esri aerial imagery as the background. It is published and hosted by [Matdata](https://matdata.eu) ([privacy statement](https://routebook.matdata.eu/privacy.html)); its configuration is in [`deploy/matdata/`](deploy/matdata/README.md).
 
 ## Quick start with Docker
 
