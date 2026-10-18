@@ -3,6 +3,7 @@ import type { Routebook, RoutebookItem } from "@routebook/routebook";
 import type { RouteResult } from "./engine.js";
 import type { LngLat } from "./geometry.js";
 import { TrainLayer } from "./train-layer.js";
+import { mapColors } from "./theme.js";
 import {
   along,
   angleDiff,
@@ -91,7 +92,6 @@ export class DriveView {
   private readonly markers = new Map<number, maplibregl.Marker>();
   private layersReady = false;
   private readonly train = new TrainLayer("drive-train");
-  private saved: { background?: unknown } = {};
   private reportedAt = -Infinity;
 
   constructor(
@@ -159,7 +159,7 @@ export class DriveView {
     const m = this.map;
     for (const id of ["drive-tracks", "drive-route-casing", "drive-route", "drive-train"]) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", "none");
     for (const id of ["route", "route-casing", "sols"]) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", "visible");
-    if (this.saved.background !== undefined) m.setPaintProperty("bg", "background-color", this.saved.background);
+    m.setPaintProperty("bg", "background-color", mapColors().bg);
     for (const h of [m.dragPan, m.dragRotate, m.scrollZoom, m.touchZoomRotate, m.doubleClickZoom, m.keyboard]) h.enable();
     m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     m.jumpTo({ pitch: 0, bearing: 0 });
@@ -183,8 +183,7 @@ export class DriveView {
     this.ensureLayers();
     for (const id of ["drive-tracks", "drive-route-casing", "drive-route", "drive-train"]) m.setLayoutProperty(id, "visibility", "visible");
     for (const id of ["route", "route-casing", "sols"]) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", "none");
-    this.saved.background = m.getPaintProperty("bg", "background-color");
-    m.setPaintProperty("bg", "background-color", "#e3e8df");
+    m.setPaintProperty("bg", "background-color", mapColors().driveGround);
     // the camera is ours while driving; the mouse wheel zooms around the train
     for (const h of [m.dragPan, m.dragRotate, m.scrollZoom, m.touchZoomRotate, m.doubleClickZoom, m.keyboard]) h.disable();
     m.setMaxPitch(80);
@@ -222,7 +221,7 @@ export class DriveView {
         type: "line",
         source: "drive-tracks",
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#7c8a97", "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 1, 16, 2.5, 19, 9] },
+        paint: { "line-color": mapColors().driveTracks, "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 1, 16, 2.5, 19, 9] },
       },
       before,
     );
@@ -231,7 +230,7 @@ export class DriveView {
       type: "line",
       source: "route",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 6, 16, 14, 19, 46] },
+      paint: { "line-color": mapColors().casing, "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 6, 16, 14, 19, 46] },
     });
     m.addLayer({
       id: "drive-route",
@@ -244,7 +243,26 @@ export class DriveView {
       },
     });
     m.addLayer(this.train);
-    m.setSky({ "sky-color": "#9fc5e8", "horizon-color": "#e8f1f8", "fog-color": "#e3e8df", "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.92, "atmosphere-blend": 0.6 });
+    this.setSky();
+  }
+
+  private setSky(): void {
+    const c = mapColors();
+    this.map.setSky({ "sky-color": c.sky, "horizon-color": c.horizon, "fog-color": c.driveGround, "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.92, "atmosphere-blend": 0.6 });
+  }
+
+  /** Repaint the Drive layers in the current theme. */
+  repaint(): void {
+    if (!this.layersReady) return;
+    const m = this.map;
+    const c = mapColors();
+    m.setPaintProperty("drive-tracks", "line-color", c.driveTracks);
+    m.setPaintProperty("drive-route-casing", "line-color", c.casing);
+    this.setSky();
+    if (this.active) {
+      m.setPaintProperty("bg", "background-color", c.driveGround);
+      this.render(true);
+    } else m.setPaintProperty("drive-route", "line-gradient", this.routeGradient(0));
   }
 
   /** Load the network tracks for the background once the snapshot is known. */
@@ -260,7 +278,7 @@ export class DriveView {
   private routeGradient(p: number): maplibregl.ExpressionSpecification {
     // travelled part grey, the part ahead in the accent colour
     const at = Math.min(0.999999, Math.max(0.000001, p));
-    return ["step", ["line-progress"], "#808893", at, "#0563bb"];
+    return ["step", ["line-progress"], mapColors().travelled, at, mapColors().route];
   }
 
   // ------------------------------------------------------------ controls

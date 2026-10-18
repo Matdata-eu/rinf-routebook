@@ -21,6 +21,8 @@ import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, ty
 import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, rinfAttribution, examplesFor } from "./datasets.js";
 import { openDatasetsDialog } from "./datasets-dialog.js";
 import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
+import { renderBrand } from "./brand.js";
+import { currentTheme, followSystemTheme, mapColors, onThemeChange, setTheme, themedRasterPaint } from "./theme.js";
 
 const params = new URLSearchParams(location.search);
 const BASE = import.meta.env.BASE_URL;
@@ -56,8 +58,8 @@ const style: StyleSpecification = {
   glyphs: CONFIG.glyphs ?? "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   sources: { basemap: basemap.source, ...Object.fromEntries(OVERLAYS.map((o) => [`overlay-${o.id}`, o.source])) },
   layers: [
-    { id: "bg", type: "background", paint: { "background-color": "#edf0f4" } },
-    { id: "basemap", type: "raster", source: "basemap", paint: basemap.paint },
+    { id: "bg", type: "background", paint: { "background-color": mapColors().bg } },
+    { id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()) },
     ...OVERLAYS.map((o) => ({
       id: `overlay-${o.id}`,
       type: "raster" as const,
@@ -83,8 +85,27 @@ map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 if (import.meta.env.DEV) Object.assign(window, { routebookMap: map });
 map.addControl(basemapSwitch(), "top-right");
 
-// MatData colours: ink-muted network, brand route and endpoints, signal-amber selection
-const SOLS_COLOR = { plain: "#56606c", aerial: "#f2f4f6" };
+/** Colour of the network lines: MatData ink-muted on a map, near white on imagery. */
+const networkColor = (b: Basemap) => (b.aerial ? mapColors().networkOnImagery : mapColors().network);
+
+/** Repaint the map in the current theme (MatData colours: brand route and origin, signal-amber selection). */
+function paintMap(): void {
+  const c = mapColors();
+  const set = (layer: string, prop: string, value: unknown) => map.getLayer(layer) && map.setPaintProperty(layer, prop, value);
+  if (map.getLayer("bg") && !document.body.classList.contains("driving")) set("bg", "background-color", c.bg);
+  for (const [k, v] of Object.entries(themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()))) set("basemap", k, v);
+  set("sols", "line-color", networkColor(basemap));
+  set("route-casing", "line-color", c.casing);
+  set("route", "line-color", c.route);
+  set("ops", "circle-color", ["case", ["==", ["get", "station"], 1], c.station, c.op]);
+  set("ops", "circle-stroke-color", c.halo);
+  set("op-labels", "text-color", c.label);
+  set("op-labels", "text-halo-color", c.halo);
+  set("endpoints", "circle-color", ["match", ["get", "role"], "from", c.from, c.to]);
+  set("endpoints", "circle-stroke-color", c.halo);
+  set("selected", "circle-color", c.selected);
+  set("selected", "circle-stroke-color", c.selectedRing);
+}
 
 /** Swap the background imagery in place, under the railway layers. */
 function setBasemap(next: Basemap): void {
@@ -95,8 +116,8 @@ function setBasemap(next: Basemap): void {
   map.addSource("basemap", next.source);
   // under the overlays, or under the railway lines when there are none
   const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
-  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: next.paint }, above);
-  if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", next.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain);
+  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(next.paint, next.aerial, currentTheme()) }, above);
+  if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", networkColor(next));
   document.querySelectorAll<HTMLButtonElement>(".basemap-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === next.id)));
   syncUrl();
 }
@@ -181,10 +202,11 @@ function addLayers(net: Network): void {
   map.addSource("route", { type: "geojson", data: empty, lineMetrics: true });
   map.addSource("endpoints", { type: "geojson", data: empty });
   map.addSource("selected", { type: "geojson", data: empty });
+  const c = mapColors();
 
-  map.addLayer({ id: "sols", type: "line", source: "sols", ...withFilter(datasetFilter()), paint: { "line-color": basemap.aerial ? SOLS_COLOR.aerial : SOLS_COLOR.plain, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
-  map.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 6, 12, 12] } });
-  map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#0563bb", "line-width": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 12, 7] } });
+  map.addLayer({ id: "sols", type: "line", source: "sols", ...withFilter(datasetFilter()), paint: { "line-color": networkColor(basemap), "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 10, 2.5] } });
+  map.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": c.casing, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 6, 12, 12] } });
+  map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": c.route, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 3.5, 12, 7] } });
   map.addLayer({
     id: "ops",
     type: "circle",
@@ -192,8 +214,8 @@ function addLayers(net: Network): void {
     ...withFilter(datasetFilter()),
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, ["case", ["==", ["get", "station"], 1], 2.5, 1.5], 11, ["case", ["==", ["get", "station"], 1], 7, 4]],
-      "circle-color": ["case", ["==", ["get", "station"], 1], "#1c2633", "#808893"],
-      "circle-stroke-color": "#fff",
+      "circle-color": ["case", ["==", ["get", "station"], 1], c.station, c.op],
+      "circle-stroke-color": c.halo,
       "circle-stroke-width": 1,
     },
   });
@@ -204,10 +226,10 @@ function addLayers(net: Network): void {
     minzoom: 8,
     ...withFilter(datasetFilter(["==", ["get", "station"], 1])),
     layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
-    paint: { "text-color": "#1c2633", "text-halo-color": "#fff", "text-halo-width": 1.5 },
+    paint: { "text-color": c.label, "text-halo-color": c.halo, "text-halo-width": 1.5 },
   });
-  map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", "#0563bb", "#1c2633"], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
-  map.addLayer({ id: "selected", type: "circle", source: "selected", paint: { "circle-radius": 10, "circle-color": "rgba(242,179,0,0.35)", "circle-stroke-color": "#f2b300", "circle-stroke-width": 3 } });
+  map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", c.from, c.to], "circle-stroke-color": c.halo, "circle-stroke-width": 3 } });
+  map.addLayer({ id: "selected", type: "circle", source: "selected", paint: { "circle-radius": 10, "circle-color": c.selected, "circle-stroke-color": c.selectedRing, "circle-stroke-width": 3 } });
 
   map.on("mouseenter", "ops", () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", "ops", () => (map.getCanvas().style.cursor = ""));
@@ -587,7 +609,7 @@ schematicScroll.addEventListener(
 function intro(): HTMLElement {
   const d = document.createElement("div");
   d.className = "intro";
-  d.innerHTML = `<h2>Routebook</h2>
+  d.innerHTML = `<h2>RouteBook</h2>
     <p>Choose an origin and a destination: type a station name above, or click an operational point on the map.</p>
     <p>The route is computed on the RINF micro topology (track level). The routebook lists what you meet along the way: lines, speed, gradient, tunnels, signals, switches and km posts.</p>
 `;
@@ -745,8 +767,22 @@ panel.replaceChildren(intro());
 
 if (CONFIG.title) {
   document.title = CONFIG.title;
-  $("brand").textContent = CONFIG.title;
+  renderBrand($("brand"), CONFIG.title);
 }
+followSystemTheme();
+const themeBtn = $("theme");
+function syncThemeButton(): void {
+  const dark = currentTheme() === "dark";
+  themeBtn.setAttribute("aria-pressed", String(dark));
+  themeBtn.title = dark ? "Switch to the light theme" : "Switch to the dark theme";
+}
+themeBtn.addEventListener("click", () => setTheme(currentTheme() === "dark" ? "light" : "dark"));
+onThemeChange(() => {
+  syncThemeButton();
+  paintMap();
+  drive.repaint();
+});
+syncThemeButton();
 const DISCLAIMER = resolveDisclaimer(CONFIG.disclaimer);
 if (DISCLAIMER) installDisclaimer(DISCLAIMER);
 if (CONFIG.privacy?.url) {
