@@ -8,9 +8,13 @@ export type ItemKind =
   /** change of infrastructure manager at a border link between two RINF datasets (derived by Routebook) */
   | "border"
   | "line"
+  /** a section parameter changes: energy, class B, ETCS, radio or gauge (derived from the tracks' parameters) */
+  | "change"
   | "speed"
   | "gradient"
   | "tunnel"
+  /** phase or system separation (era:PhaseInfo / era:SystemSeparationInfo), placed by line km */
+  | "separation"
   | "signal"
   | "switch"
   | "kmPost"
@@ -51,6 +55,32 @@ export interface Gap {
   reason: string;
 }
 
+/**
+ * A part of the route on one RINF track (or a run of tracks with the same parameters): what is in
+ * force there. The line strip draws its bands from these, the section card lists them.
+ */
+export interface Stretch {
+  /** metres from the start of the route */
+  start: number;
+  end: number;
+  /** the RINF track (running track, else a siding) the route runs on; absent where the element belongs to none */
+  track?: string;
+  trackLabel?: string;
+  /** line id (era:nationalLine) and its label */
+  line?: string;
+  lineLabel?: string;
+  /** era:maximumPermittedSpeed of the running track, km/h */
+  speed?: number;
+  params?: Record<string, string>;
+  notApplicable?: string[];
+  notYetAvailable?: string[];
+  /** line km at the start and the end, when km anchors allow an estimate */
+  kmStart?: number;
+  kmEnd?: number;
+  /** the RINF dataset, on routes across networks */
+  dataset?: string;
+}
+
 export interface Routebook {
   from: OperationalPoint;
   to: OperationalPoint;
@@ -59,5 +89,7 @@ export interface Routebook {
   /** metres */
   length: number;
   items: RoutebookItem[];
+  /** What is in force along the route, stretch by stretch, from start to end. */
+  stretches?: Stretch[];
   gaps: Gap[];
 }

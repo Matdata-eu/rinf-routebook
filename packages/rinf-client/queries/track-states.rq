@@ -1,0 +1,26 @@
+# What the infrastructure manager declares about parameters it gives no value for:
+# era:notApplicable (the parameter does not apply here, e.g. no ETCS) or era:notYetAvailable.
+# Read on the track and on the objects it points to (contact line system, ETCS, load capability).
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+PREFIX era:  <http://data.europa.eu/949/>
+
+SELECT ?track ?state ?prop WHERE { GRAPH {{graph}} {
+  VALUES ?state { era:notApplicable era:notYetAvailable }
+  VALUES ?prop {
+    era:maximumPermittedSpeed era:gradientProfile
+    era:contactLineSystem era:contactLineSystemType era:energySupplySystem era:maxTrainCurrent
+    era:trackRaisedPantographsDistanceAndSpeed era:tsiPantographHead
+    era:protectionLegacySystem era:otherTrainProtection era:etcs era:etcsLevelType era:etcsBaseline
+    era:gsmRVersion era:legacyRadioSystem
+    era:wheelSetGauge era:gaugingProfile era:trackLoadCapability era:loadCapabilityLineCategory
+    era:trackPhaseInfo era:trackSystemSeparationInfo
+  }
+  ?track a era:Track .
+  {
+    ?track ?state ?prop .
+  } UNION {
+    VALUES ?via { era:contactLineSystem era:etcs era:trackLoadCapability }
+    ?track ?via ?o .
+    ?o ?state ?prop .
+  }
+} }

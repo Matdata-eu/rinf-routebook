@@ -1,7 +1,7 @@
 export * from "./types.js";
 export * from "./countries.js";
 export { SparqlClient, DEFAULT_ENDPOINT, loadQuery, type Row, type SparqlClientOptions } from "./sparql.js";
-export { fetchSnapshot, assembleSnapshot, cleanLabel, readinessCounts, FETCH_VERSION, type RawResults, type FetchSnapshotOptions } from "./snapshot.js";
+export { fetchSnapshot, assembleSnapshot, cleanLabel, readinessCounts, raisedPantographsText, TRACK_PARAM_KEYS, FETCH_VERSION, type TrackParamKey, type RawResults, type FetchSnapshotOptions } from "./snapshot.js";
 export { parseWktPoint, parseWktLineString, wktPosition } from "./wkt.js";
 export { saveSnapshot, loadSnapshot, saveWebBundle, swapDirectory, compressPart, datasetFolder, writeDatasetIndex, writeNetworkIndex, readDatasetIndex, readCatalogue, parseCatalogue, datasetEntry, type DatasetEntry, type DatasetCatalogue, type DatasetFailure, type DatasetStatus, type IndexOptions, type PendingDataset, type SaveBundleOptions } from "./cache.js";
 export * from "./sync.js";

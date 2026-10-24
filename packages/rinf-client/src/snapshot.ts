@@ -7,6 +7,7 @@ import type {
   KmPosition,
   OperationalPoint,
   PointFeature,
+  Separation,
   Snapshot,
   SnapshotMeta,
   Track,
@@ -89,6 +90,9 @@ export async function fetchSnapshot({ client, country, name, imName, onProgress,
     tracks: await run("tracks"),
     trackElements: await run("track-elements"),
     trackParents: await run("track-parents"),
+    trackParams: await run("track-params"),
+    trackStates: await run("track-states"),
+    trackSeparations: await run("track-separations"),
     features: await run("features"),
     tunnels: await run("tunnels"),
     tunnelAreas: await run("tunnel-areas"),
@@ -118,14 +122,63 @@ export type RawResults = Record<
   | "ops" | "opAreas" | "opPoints" | "lines" | "sols" | "netelements" | "netrelations"
   | "tracks" | "trackElements" | "trackParents" | "features" | "tunnels" | "tunnelAreas" | "geometry",
   Row[]
->;
+> &
+  // section parameters (FETCH_VERSION 3), absent in results gathered before
+  Partial<Record<"trackParams" | "trackStates" | "trackSeparations", Row[]>>;
+
+/** The section parameters Routebook reads per track (track-params.rq), in display order. */
+export const TRACK_PARAM_KEYS = [
+  "contactLine", "energySupply", "maxTrainCurrent", "raisedPantographs", "pantographHead",
+  "protectionLegacy", "otherProtection", "etcsLevel", "etcsBaseline",
+  "gsmR", "legacyRadio",
+  "gauge", "gauging", "lineCategory",
+] as const;
+export type TrackParamKey = (typeof TRACK_PARAM_KEYS)[number];
+
+/**
+ * The parameter keys an era:notApplicable / era:notYetAvailable statement covers: a statement on an
+ * object (no ETCS at all, no contact line system) covers every parameter read from it.
+ */
+const STATE_KEYS: Record<string, string[]> = {
+  maximumPermittedSpeed: ["speed"],
+  gradientProfile: ["gradient"],
+  contactLineSystem: ["contactLine", "energySupply", "maxTrainCurrent"],
+  contactLineSystemType: ["contactLine"],
+  energySupplySystem: ["energySupply"],
+  maxTrainCurrent: ["maxTrainCurrent"],
+  trackRaisedPantographsDistanceAndSpeed: ["raisedPantographs"],
+  tsiPantographHead: ["pantographHead"],
+  protectionLegacySystem: ["protectionLegacy"],
+  otherTrainProtection: ["otherProtection"],
+  etcs: ["etcsLevel", "etcsBaseline"],
+  etcsLevelType: ["etcsLevel"],
+  etcsBaseline: ["etcsBaseline"],
+  gsmRVersion: ["gsmR"],
+  legacyRadioSystem: ["legacyRadio"],
+  wheelSetGauge: ["gauge"],
+  gaugingProfile: ["gauging"],
+  trackLoadCapability: ["lineCategory"],
+  loadCapabilityLineCategory: ["lineCategory"],
+  trackPhaseInfo: ["phaseSeparation"],
+  trackSystemSeparationInfo: ["systemSeparation"],
+};
+
+/** "1 pantograph, up to 40 km/h" / "2 pantographs at least 250 m apart, up to 200 km/h" (RINF 1.1.1.2.2.4). */
+export function raisedPantographsText(number?: string, distance?: string, speed?: string): string | undefined {
+  const n = num(number), d = num(distance), v = num(speed);
+  if (n === undefined && v === undefined) return undefined;
+  const parts = [n !== undefined ? `${n} pantograph${n === 1 ? "" : "s"}${d ? ` at least ${d} m apart` : ""}` : undefined, v !== undefined ? `up to ${v} km/h` : undefined];
+  return parts.filter(Boolean).join(", ");
+}
 
 /**
  * Version of the queries and the parsing; raise it when a change means data fetched before has
  * to be fetched again (the sync does that by itself). 2: OP and SoL geometry also read from the
- * net reference, WKT axis order, signs and exponents normalised.
+ * net reference, WKT axis order, signs and exponents normalised. 3: section parameters per track
+ * (energy, train protection, radio, gauge), their not-applicable / not-yet-available statements and
+ * phase and system separations.
  */
-export const FETCH_VERSION = 2;
+export const FETCH_VERSION = 3;
 
 /**
  * What decides whether Routebook can work on a dataset (see the web app's Datasets dialog):
@@ -244,6 +297,8 @@ export function assembleSnapshot(
     if (t && row.parent && !t.partOf.includes(row.parent)) t.partOf.push(row.parent);
   }
 
+  assembleTrackParams(tracks, r);
+
   const features = new Map<string, PointFeature>();
   for (const row of r.features) {
     const kind = row.class ? FEATURE_KINDS[row.class] : undefined;
@@ -318,4 +373,68 @@ export function assembleSnapshot(
     ...readinessCounts(snapshot),
   };
   return snapshot;
+}
+
+const bool = (v: string | undefined): boolean | undefined => (v === "true" || v === "1" ? true : v === "false" || v === "0" ? false : undefined);
+
+/** Section parameters, their declared states and the separations onto the tracks (in place). */
+function assembleTrackParams(tracks: Map<string, Track>, r: RawResults): void {
+  const values = new Map<string, Map<string, Set<string>>>();
+  const pantos = new Map<string, Record<string, string>>();
+  for (const row of r.trackParams ?? []) {
+    if (!row.track || !row.key || row.v === undefined || !tracks.has(row.track)) continue;
+    if (row.key.startsWith("raisedPantographs.")) {
+      const p = pantos.get(row.track) ?? {};
+      p[row.key.slice("raisedPantographs.".length)] = row.v;
+      pantos.set(row.track, p);
+      continue;
+    }
+    const text = cleanLabel(row.label) ?? (row.v.startsWith("http") ? row.v.split("/").pop()! : row.v);
+    const perTrack = values.get(row.track) ?? new Map<string, Set<string>>();
+    const set = perTrack.get(row.key) ?? new Set<string>();
+    set.add(text);
+    perTrack.set(row.key, set);
+    values.set(row.track, perTrack);
+  }
+  for (const [id, perTrack] of values) {
+    const t = tracks.get(id)!;
+    const params: Record<string, string> = {};
+    for (const key of TRACK_PARAM_KEYS) {
+      const set = perTrack.get(key);
+      if (set) params[key] = [...set].sort().join(", ");
+    }
+    if (Object.keys(params).length) t.params = params;
+  }
+  for (const [id, p] of pantos) {
+    const text = raisedPantographsText(p.number, p.distance, p.speed);
+    if (!text) continue;
+    const t = tracks.get(id)!;
+    t.params = { ...(t.params ?? {}), raisedPantographs: text };
+  }
+  for (const row of r.trackStates ?? []) {
+    const t = row.track && tracks.get(row.track);
+    const prop = row.prop?.startsWith(ERA) ? row.prop.slice(ERA.length) : undefined;
+    const keys = prop ? STATE_KEYS[prop] : undefined;
+    if (!t || !keys) continue;
+    const field = row.state === `${ERA}notApplicable` ? "notApplicable" : row.state === `${ERA}notYetAvailable` ? "notYetAvailable" : undefined;
+    if (!field) continue;
+    // a value wins over a statement about it
+    const list = (t[field] ??= []);
+    for (const k of keys) if (!t.params?.[k] && !list.includes(k)) list.push(k);
+  }
+  for (const row of r.trackSeparations ?? []) {
+    const t = row.track && tracks.get(row.track);
+    if (!t || !row.sep || (row.kind !== "phase" && row.kind !== "system")) continue;
+    if (t.separations?.some((s) => s.id === row.sep)) continue;
+    const km = num(row.km), length = num(row.length);
+    const flags = { pantographLowered: bool(row.pantographLowered), switchOffBreaker: bool(row.switchOffBreaker), changeSupplySystem: bool(row.changeSupply) };
+    const sep: Separation = {
+      id: row.sep,
+      kind: row.kind,
+      ...(km !== undefined ? { km } : {}),
+      ...(length !== undefined ? { length } : {}),
+      ...Object.fromEntries(Object.entries(flags).filter(([, v]) => v !== undefined)),
+    };
+    (t.separations ??= []).push(sep);
+  }
 }
