@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { esriLayer, inBounds, loadConfig, loadPrivacy, parseTilePath, privacyPage, publicConfig, substituteEnv, tileBbox3857, upstreamUrl } from "../runtime-config.mjs";
-import { health, startServer, startSync } from "../serve.mjs";
+import { esriLayer, inBounds, loadConfig, pmtilesLayer, loadPrivacy, parseTilePath, privacyPage, publicConfig, substituteEnv, tileBbox3857, upstreamUrl } from "../runtime-config.mjs";
+import { byteRange, health, startServer, startSync } from "../serve.mjs";
 import { buildStatic } from "../build-static.mjs";
 import { readFile } from "node:fs/promises";
 
@@ -32,6 +32,14 @@ describe("runtime configuration", () => {
     expect(cfg.basemaps[0].tiles[0]).toBe("https://o.test/{z}/{x}/{y}?key=s3cret");
     expect(cfg.basemaps[1].tiles[0]).toContain("token=e%26k");
     expect(loadConfig({ cwd: join(dir, "none"), log: quiet, env: {} })).toEqual({ basemaps: [], overlays: [] });
+  });
+
+  it("adds a self-hosted PMTiles basemap from ROUTEBOOK_BASEMAP_PMTILES", () => {
+    const config = loadConfig({ env: { ROUTEBOOK_BASEMAP_PMTILES: "europe 2026.pmtiles" }, cwd: tmpdir(), log: quiet });
+    expect(config.basemaps[0]).toEqual(pmtilesLayer("europe 2026.pmtiles"));
+    expect(config.basemaps[0].url).toBe("basemap/europe%202026.pmtiles");
+    const own = loadConfig({ env: { ROUTEBOOK_CONFIG: JSON.stringify({ basemaps: [{ id: "v", type: "pmtiles", url: "basemap/a.pmtiles" }, { id: "bad", type: "pmtiles" }] }) }, cwd: tmpdir(), log: quiet });
+    expect(own.basemaps.map((b: { id: string }) => b.id)).toEqual(["v"]);
   });
 
   it("never sends the keys of proxied layers to the browser", () => {
@@ -124,6 +132,41 @@ describe("server", () => {
     expect(await tile.text()).toBe("tile /3/4/5.png");
     expect((await get("/tiles/other/3/4/5")).status).toBe(404);
     expect((await fetch(`${base(server)}/config.json`, { method: "POST" })).status).toBe(405);
+  });
+
+  it("serves a self-hosted basemap with range requests", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "rbdist-"));
+    const data = await mkdtemp(join(tmpdir(), "rbdata-"));
+    await writeFile(join(dist, "index.html"), "<!doctype html>");
+    await mkdir(join(data, "basemap", "fonts", "Noto Sans Regular"), { recursive: true });
+    await writeFile(join(data, "basemap", "europe.pmtiles"), "0123456789abcdef");
+    await writeFile(join(data, "basemap", "fonts", "Noto Sans Regular", "0-255.pbf"), "glyphs");
+    const server = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config: {} });
+    servers.push(server);
+    const url = `${base(server)}/basemap/europe.pmtiles`;
+    const part = await fetch(url, { headers: { Range: "bytes=2-5" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe("bytes 2-5/16");
+    expect(await part.text()).toBe("2345");
+    const tail = await fetch(url, { headers: { Range: "bytes=-3" } });
+    expect(await tail.text()).toBe("def");
+    expect((await fetch(url, { headers: { Range: "bytes=40-50" } })).status).toBe(416);
+    const whole = await fetch(url);
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get("accept-ranges")).toBe("bytes");
+    expect(await (await fetch(`${base(server)}/basemap/fonts/Noto%20Sans%20Regular/0-255.pbf`)).text()).toBe("glyphs");
+    expect((await fetch(`${base(server)}/basemap/../web/x`)).status).toBe(404);
+    expect((await fetch(`${base(server)}/basemap/missing.pmtiles`)).status).toBe(404);
+  });
+
+  it("reads byte ranges", () => {
+    expect(byteRange(undefined, 10)).toBeUndefined();
+    expect(byteRange("bytes=0-3", 10)).toEqual({ start: 0, end: 3 });
+    expect(byteRange("bytes=5-", 10)).toEqual({ start: 5, end: 9 });
+    expect(byteRange("bytes=8-100", 10)).toEqual({ start: 8, end: 9 });
+    expect(byteRange("bytes=-4", 10)).toEqual({ start: 6, end: 9 });
+    expect(byteRange("bytes=0-1,4-5", 10)).toBeUndefined();
+    expect(byteRange("bytes=10-12", 10)).toBeNull();
   });
 
   it("sends precompressed bundle parts, validates ETags and reports the catalogue on /healthz", async () => {

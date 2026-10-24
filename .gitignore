@@ -6,6 +6,8 @@ coverage/
 # fetched RINF data (regenerate with `pnpm routebook fetch --dataset <id>`)
 data/snapshots/
 data/web/
+# a self-hosted basemap (PMTiles extract and fonts, see docs/deployment.md)
+data/basemap/
 # deployment settings: map layer keys and the like stay local (see config.example.json)
 /config.json
 /config/

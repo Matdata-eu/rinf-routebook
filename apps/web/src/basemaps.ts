@@ -1,4 +1,5 @@
-import type { RasterLayerSpecification, RasterSourceSpecification, RequestParameters } from "maplibre-gl";
+import type { LayerSpecification, RasterLayerSpecification, RasterSourceSpecification, RequestParameters, VectorSourceSpecification } from "maplibre-gl";
+import { layers as protomapsLayers, namedFlavor } from "@protomaps/basemaps";
 import type { DisclaimerConfig } from "./disclaimer.js";
 
 /**
@@ -14,15 +15,26 @@ import type { DisclaimerConfig } from "./disclaimer.js";
 export interface Basemap {
   id: string;
   label: string;
-  source: RasterSourceSpecification;
+  source: RasterSourceSpecification | VectorSourceSpecification;
+  /** a vector basemap (a self-hosted Protomaps PMTiles file): drawn with the Protomaps style, light or dark with the theme */
+  vector?: { lang: string };
   paint: RasterLayerSpecification["paint"];
   /** true for imagery: overlays switch to colours that read on a dark, busy background */
   aerial: boolean;
 }
 
-/** One raster layer in config.json (`basemaps` or `overlays`). */
+/** One layer in config.json (`basemaps` or `overlays`): raster tiles, or (basemaps only) a Protomaps PMTiles file. */
 export interface LayerConfig {
   id: string;
+  /**
+   * "pmtiles": a vector basemap in one Protomaps PMTiles file (`url`), served by the deployer
+   * (the RouteBook server serves `<data>/basemap/` at `basemap/`). No tile service involved.
+   */
+  type?: "raster" | "pmtiles";
+  /** type "pmtiles": the file, e.g. "basemap/europe.pmtiles" (relative to the app) */
+  url?: string;
+  /** type "pmtiles": the language of the place names (default "en"; local names are shown where there is none) */
+  lang?: string;
   label?: string;
   /** One line under the label in the Map layers menu. */
   description?: string;
@@ -30,7 +42,7 @@ export interface LayerConfig {
    * Tile URL templates: {z}/{x}/{y}, {quadkey} or {bbox-epsg-3857} (WMS GetMap).
    * Relative URLs (e.g. the server's proxy, `tiles/<id>/{z}/{x}/{y}`) resolve against the app.
    */
-  tiles: string[];
+  tiles?: string[];
   tileSize?: number;
   minzoom?: number;
   maxzoom?: number;
@@ -66,8 +78,15 @@ export interface RuntimeConfig {
   defaultBasemap?: string;
   basemaps?: LayerConfig[];
   overlays?: LayerConfig[];
-  /** Glyph URL template for map labels (MapLibre `glyphs`). */
+  /**
+   * Glyph URL template for map labels (MapLibre `glyphs`). Default: the MapLibre demo fonts, or the
+   * Protomaps fonts when a PMTiles basemap is configured (it labels places in Noto Sans).
+   */
   glyphs?: string;
+  /** Font of the operational point labels; it must be in `glyphs`. */
+  labelFont?: string;
+  /** false: no service worker (no offline use, nothing cached by the app). */
+  offline?: boolean;
   /** Privacy statement, linked in the footer: the server turns a text or file into `privacy.html`. */
   privacy?: { label?: string; url: string };
   /** Example routes on the start panel, per dataset id: [{ from: uopid, to: uopid, label? }]. */
@@ -151,8 +170,38 @@ export function absoluteTemplate(template: string, base: string): string {
   return dir + template.replace(/^\.\//, "");
 }
 
-/** A config layer as a MapLibre raster source + paint. */
+export const PMTILES_ATTRIBUTION = `<a href="https://protomaps.com">Protomaps</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`;
+
+/** A Protomaps PMTiles file as a vector basemap. */
+function pmtilesBasemap(c: LayerConfig, base: string): Basemap {
+  const source: VectorSourceSpecification = {
+    type: "vector",
+    url: `pmtiles://${absoluteTemplate(c.url!.trim(), base)}`,
+    attribution: c.attribution ?? PMTILES_ATTRIBUTION,
+  };
+  return { id: c.id, label: c.label?.trim() || c.id, source, paint: {}, aerial: false, vector: { lang: c.lang?.trim() || "en" } };
+}
+
+/**
+ * The style layers of a vector basemap on source `source`, light or dark: the Protomaps layers,
+ * ids prefixed "basemap:", without the points of interest (they need a sprite and only clutter a
+ * railway map).
+ */
+export function vectorLayers(b: Basemap, theme: "light" | "dark", source = "basemap"): LayerSpecification[] {
+  return protomapsLayers(source, namedFlavor(theme === "dark" ? "dark" : "light"), { lang: b.vector?.lang ?? "en" })
+    .filter((l) => l.id !== "pois")
+    .map((l) => ({ ...l, id: `basemap:${l.id}` }) as LayerSpecification);
+}
+
+/** Whether a style layer belongs to the basemap (the raster one, or the layers of a vector one). */
+export const isBasemapLayer = (id: string): boolean => id === "basemap" || id.startsWith("basemap:");
+
+/** The Protomaps fonts, for a PMTiles basemap's labels (Noto Sans). Self-host them with `glyphs`. */
+export const PROTOMAPS_GLYPHS = "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf";
+
+/** A config layer as a MapLibre raster source + paint, or a vector basemap for a PMTiles file. */
 export function layerFromConfig(c: LayerConfig, opts: { base: string; overlay?: boolean }): Basemap {
+  if (c.type === "pmtiles" && !opts.overlay) return pmtilesBasemap(c, opts.base);
   const imagery = c.imagery ?? !opts.overlay;
   const paint: RasterLayerSpecification["paint"] = {
     ...(opts.overlay ? {} : imagery ? aerialPaint : {}),
@@ -161,7 +210,7 @@ export function layerFromConfig(c: LayerConfig, opts: { base: string; overlay?: 
   };
   const source: RasterSourceSpecification = {
     type: "raster",
-    tiles: c.tiles.map((t) => absoluteTemplate(t, opts.base)),
+    tiles: (c.tiles ?? []).map((t) => absoluteTemplate(t, opts.base)),
     tileSize: c.tileSize === 512 ? 512 : 256,
     maxzoom: Number.isFinite(c.maxzoom) && c.maxzoom! > 0 ? c.maxzoom! : 19,
     ...(Number.isFinite(c.minzoom) ? { minzoom: c.minzoom! } : {}),
@@ -173,7 +222,10 @@ export function layerFromConfig(c: LayerConfig, opts: { base: string; overlay?: 
 }
 
 const valid = (c: LayerConfig | undefined): c is LayerConfig =>
-  !!c && typeof c.id === "string" && c.id.trim() !== "" && Array.isArray(c.tiles) && c.tiles.some((t) => typeof t === "string" && t.trim() !== "");
+  !!c &&
+  typeof c.id === "string" &&
+  c.id.trim() !== "" &&
+  (c.type === "pmtiles" ? typeof c.url === "string" && c.url.trim() !== "" : Array.isArray(c.tiles) && c.tiles.some((t) => typeof t === "string" && t.trim() !== ""));
 
 /**
  * The backgrounds on offer: the built-in street map (and the coarse Sentinel-2 mosaic when
@@ -191,7 +243,7 @@ export function basemaps(config: RuntimeConfig, base = "http://localhost/"): Bas
 
 /** The overlays, drawn between the background and the railway lines: OpenRailwayMap, then the configured ones. */
 export function overlays(config: RuntimeConfig, base = "http://localhost/"): Array<Basemap & { visible: boolean; description?: string }> {
-  const own = (config.overlays ?? []).filter(valid).map((c) => ({ ...layerFromConfig(c, { base, overlay: true }), visible: c.visible === true, ...(c.description ? { description: c.description } : {}) }));
+  const own = (config.overlays ?? []).filter((c) => valid(c) && c.type !== "pmtiles").map((c) => ({ ...layerFromConfig(c, { base, overlay: true }), visible: c.visible === true, ...(c.description ? { description: c.description } : {}) }));
   const keep = config.builtinOverlays ?? true;
   const builtins = BUILTIN_OVERLAYS.filter((o) => (keep === true || (Array.isArray(keep) && keep.includes(o.id))) && !own.some((x) => x.id === o.id));
   return [...builtins, ...own];
@@ -203,6 +255,13 @@ export function pickBasemap(list: Basemap[], id: string | null | undefined, fall
   return find(id) ?? (id === "aerial" ? list.find((b) => b.aerial && b.id !== "satellite") ?? list.find((b) => b.aerial) : undefined) ?? find(fallback) ?? list[0]!;
 }
 
+/** The glyphs and the font of the operational point labels: configured, else what the basemaps need. */
+export function labelFonts(config: RuntimeConfig, list: Basemap[]): { glyphs: string; font: string } {
+  const vector = list.some((b) => b.vector);
+  if (config.glyphs) return { glyphs: config.glyphs, font: config.labelFont ?? (vector ? "Noto Sans Medium" : "Open Sans Semibold") };
+  return vector ? { glyphs: PROTOMAPS_GLYPHS, font: config.labelFont ?? "Noto Sans Medium" } : { glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf", font: config.labelFont ?? "Open Sans Semibold" };
+}
+
 /**
  * MapLibre transformRequest that adds the configured headers to tile requests
  * of the layers that have them (matched on the template up to its first placeholder).
@@ -210,7 +269,7 @@ export function pickBasemap(list: Basemap[], id: string | null | undefined, fall
 export function headerTransform(layers: LayerConfig[], base = "http://localhost/"): ((url: string) => RequestParameters | undefined) | undefined {
   const rules = layers
     .filter((l) => valid(l) && l.headers && Object.keys(l.headers).length)
-    .flatMap((l) => l.tiles.map((t) => ({ prefix: absoluteTemplate(t, base).split("{")[0]!, headers: l.headers! })));
+    .flatMap((l) => (l.tiles ?? []).map((t) => ({ prefix: absoluteTemplate(t, base).split("{")[0]!, headers: l.headers! })));
   if (!rules.length) return undefined;
   return (url) => {
     const rule = rules.find((r) => url.startsWith(r.prefix));

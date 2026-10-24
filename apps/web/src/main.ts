@@ -21,7 +21,9 @@ import { DriveView } from "./drive-view.js";
 import { LineStrip } from "./line-strip.js";
 import { STRIP_ZOOMS } from "./line-strip-model.js";
 import { clockText, elapsedText, parseClock, timetable, type TimetableEntry } from "./timetable.js";
-import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
+import { Protocol as PMTilesProtocol } from "pmtiles";
+import { basemaps, headerTransform, isBasemapLayer, labelFonts, loadRuntimeConfig, overlays, pickBasemap, vectorLayers, type Basemap } from "./basemaps.js";
+import type { LayerSpecification } from "maplibre-gl";
 import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, readiness, rinfAttribution, examplesFor } from "./datasets.js";
 import { openDatasetsDialog } from "./datasets-dialog.js";
 import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
@@ -57,14 +59,24 @@ const OVERLAYS = overlays(CONFIG, location.href);
 let basemap = pickBasemap(BASEMAPS, params.get("base"), CONFIG.defaultBasemap);
 const shownOverlays = new Set(params.has("layers") ? (params.get("layers") ?? "").split(",").filter(Boolean) : OVERLAYS.filter((o) => o.visible).map((o) => o.id));
 
+// self-hosted vector basemaps: one Protomaps PMTiles file, read with HTTP range requests
+if (BASEMAPS.some((b) => b.vector)) maplibregl.addProtocol("pmtiles", new PMTilesProtocol().tile);
+/** key-free glyphs for OP labels (and a vector basemap's place names); without network the labels are simply not drawn */
+const FONTS = labelFonts(CONFIG, BASEMAPS);
+
+/** The style layers of a background: one raster layer, or the layers of a vector basemap in the current theme. */
+function basemapLayers(b: Basemap): LayerSpecification[] {
+  if (b.vector) return vectorLayers(b, currentTheme());
+  return [{ id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(b.paint, b.aerial, currentTheme()) }];
+}
+
 const style: StyleSpecification = {
   version: 8,
-  // key-free glyphs for OP labels; without network the labels are simply not drawn
-  glyphs: CONFIG.glyphs ?? "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  glyphs: FONTS.glyphs,
   sources: { basemap: basemap.source, ...Object.fromEntries(OVERLAYS.map((o) => [`overlay-${o.id}`, o.source])) },
   layers: [
     { id: "bg", type: "background", paint: { "background-color": mapColors().bg } },
-    { id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()) },
+    ...basemapLayers(basemap),
     ...OVERLAYS.map((o) => ({
       id: `overlay-${o.id}`,
       type: "raster" as const,
@@ -100,7 +112,9 @@ function paintMap(): void {
   const c = mapColors();
   const set = (layer: string, prop: string, value: unknown) => map.getLayer(layer) && map.setPaintProperty(layer, prop, value);
   if (map.getLayer("bg") && !document.body.classList.contains("driving")) set("bg", "background-color", c.bg);
-  for (const [k, v] of Object.entries(themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()))) set("basemap", k, v);
+  // a vector basemap has a light and a dark style: swap its layers
+  if (basemap.vector && map.getLayer("bg")) replaceBasemapLayers(false);
+  else for (const [k, v] of Object.entries(themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()))) set("basemap", k, v);
   set("sols", "line-color", networkColor(basemap));
   set("route-casing", "line-color", c.casing);
   set("route", "line-color", c.route);
@@ -119,16 +133,23 @@ function opColor(c: ReturnType<typeof mapColors>): maplibregl.ExpressionSpecific
   return ["case", ["!=", ["get", "routable"], 1], c.unroutable, ["==", ["get", "station"], 1], c.station, c.op];
 }
 
+/** Put the current background's layers in place, under the overlays and the railway layers (and its source too, when it changed). */
+function replaceBasemapLayers(newSource: boolean): void {
+  for (const l of map.getStyle().layers ?? []) if (isBasemapLayer(l.id)) map.removeLayer(l.id);
+  if (newSource) {
+    if (map.getSource("basemap")) map.removeSource("basemap");
+    map.addSource("basemap", basemap.source);
+  }
+  // under the overlays, or under the railway lines when there are none
+  const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
+  for (const l of basemapLayers(basemap)) map.addLayer(l, above);
+}
+
 /** Swap the background imagery in place, under the railway layers. */
 function setBasemap(next: Basemap): void {
   if (next.id === basemap.id) return;
   basemap = next;
-  if (map.getLayer("basemap")) map.removeLayer("basemap");
-  if (map.getSource("basemap")) map.removeSource("basemap");
-  map.addSource("basemap", next.source);
-  // under the overlays, or under the railway lines when there are none
-  const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
-  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(next.paint, next.aerial, currentTheme()) }, above);
+  replaceBasemapLayers(true);
   if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", networkColor(next));
   document.querySelectorAll<HTMLInputElement>(".layers-menu input[name=basemap]").forEach((r) => (r.checked = r.value === next.id));
   syncUrl();
@@ -325,7 +346,7 @@ function addLayers(net: Network): void {
     source: "ops",
     minzoom: 8,
     ...withFilter(datasetFilter(["==", ["get", "station"], 1])),
-    layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
+    layout: { "text-field": ["get", "name"], "text-font": [FONTS.font], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
     paint: { "text-color": ["case", ["==", ["get", "routable"], 1], c.label, c.unroutable], "text-halo-color": c.halo, "text-halo-width": 1.5 },
   });
   map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", c.from, c.to], "circle-stroke-color": c.halo, "circle-stroke-width": 3 } });
@@ -1210,6 +1231,18 @@ Promise.all([loadIndexOrBundle(), stylePromise])
     update();
   })
   .catch((e: unknown) => setState("error", e instanceof Error ? e.message : String(e)));
+
+// offline: the service worker of the build (not in the dev server, where it would cache stale modules)
+if (import.meta.env.PROD && "serviceWorker" in navigator && CONFIG.offline !== false) {
+  // main.ts awaits the configuration first, so the page may have loaded already
+  const register = () => void navigator.serviceWorker.register(`${BASE}sw.js`, { scope: BASE }).catch(() => undefined);
+  if (document.readyState === "complete") register();
+  else window.addEventListener("load", register);
+}
+const offlineNote = () => document.body.classList.toggle("offline", !navigator.onLine);
+window.addEventListener("online", offlineNote);
+window.addEventListener("offline", offlineNote);
+offlineNote();
 
 // print the gap list expanded
 window.addEventListener("beforeprint", () => document.querySelectorAll<HTMLDetailsElement>(".rb-gaps").forEach((d) => (d.open = true)));

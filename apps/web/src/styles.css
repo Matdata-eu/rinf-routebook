@@ -638,3 +638,5 @@ a:hover { color: var(--brand-strong); }
 .ls-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-4); padding: 6px var(--space-3); border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-muted); background: var(--surface); }
 /* phone / tablet: the schematic and the strip get most of the height (the routebook scrolls below) */
 @media (max-width: 1000px) { body[data-view="strip"] .layout, body[data-view="schematic"] .layout { grid-template-rows: 72vh minmax(0, 1fr); } }
+/* offline (the service worker serves the saved app and data) */
+body.offline .status::after { content: " · Offline: routes and maps you opened before"; color: var(--amber-ink); }
