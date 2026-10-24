@@ -1,5 +1,7 @@
-import type { Routebook } from "@routebook/routebook";
+import { PARAM_STATE_LABELS, type ParamState, type Routebook } from "@routebook/routebook";
 import { KIND_LABELS, QUALITY_LABELS, gradientColor, speedColor, stripRows } from "./strip.js";
+import { routeCoverage } from "./line-strip-model.js";
+import type { TimetableEntry } from "./timetable.js";
 
 const km = (m: number) => (m / 1000).toFixed(3);
 
@@ -55,6 +57,51 @@ export function separationNotes(data: Record<string, unknown> | undefined): stri
 export interface StripOptions {
   hiddenKinds: Set<string>;
   onSelect: (index: number) => void;
+  /** times at the operational points, shown on their rows */
+  times?: TimetableEntry[];
+  timeText?: (ms: number | undefined) => string;
+}
+
+/** The time on a timetable row: "a 08:15 d 08:16" at a stop, the passing time otherwise. */
+export function timeLabel(t: TimetableEntry, text: (ms: number | undefined) => string): string {
+  if (!t.stop) return text(t.pass);
+  return [t.arrival !== undefined ? `arr ${text(t.arrival)}` : "", t.departure !== undefined ? `dep ${text(t.departure)}` : ""].filter(Boolean).join(" · ");
+}
+
+const COVERAGE_STATES: ParamState[] = ["value", "notApplicable", "notYetAvailable", "notPublished", "noTrack"];
+
+/** How much of the route each section parameter is known for, and why it is not. */
+function coverageBox(rb: Routebook): HTMLDetailsElement {
+  const box = el("details", "rb-coverage");
+  const rows = routeCoverage(rb);
+  const known = rows.filter((r) => r.shares.value + r.shares.notApplicable > 0.995).length;
+  box.append(el("summary", undefined, `Section parameters on this route: ${known} of ${rows.length} fully declared`));
+  const legend = el("div", "cov-legend");
+  for (const st of COVERAGE_STATES) {
+    const s = el("span");
+    s.append(el("i", `cov-sw st-${st}`), document.createTextNode(PARAM_STATE_LABELS[st]));
+    legend.append(s);
+  }
+  const table = el("div", "cov-rows");
+  for (const r of rows) {
+    const row = el("div", "cov-row");
+    row.append(el("span", "cov-label", r.label));
+    const bar = el("span", "cov-bar");
+    const parts: string[] = [];
+    for (const st of COVERAGE_STATES) {
+      const share = r.shares[st];
+      if (share < 0.0005) continue;
+      const seg = el("i", `st-${st}`);
+      seg.style.width = `${share * 100}%`;
+      bar.append(seg);
+      parts.push(`${PARAM_STATE_LABELS[st]} ${Math.round(share * 100)}%`);
+    }
+    bar.title = parts.join(", ");
+    row.append(bar, el("span", "cov-pct", `${Math.round((r.shares.value + r.shares.notApplicable) * 100)}%`));
+    table.append(row);
+  }
+  box.append(legend, table, el("p", "cov-note", "Share of the route length. Not applicable and not yet available are declared by the infrastructure manager in RINF; not published means RINF says nothing. Open the Strip view and click a section for the details."));
+  return box;
 }
 
 /** Render the routebook header, gap list and the vertical strip into `root`. */
@@ -100,6 +147,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
   }
   strip.append(cols);
 
+  const timesByIndex = new Map((opts.times ?? []).map((t) => [t.index, t]));
   for (const row of stripRows(rb)) {
     const { item } = row;
     if (opts.hiddenKinds.has(item.kind)) continue;
@@ -138,10 +186,15 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
     if (item.kind === "tunnel" && item.data?.boundary) extra.push(String(item.data.boundary));
     if (item.kind === "tunnel" && typeof item.data?.length === "number") extra.push(`${Math.round(item.data.length as number)} m`);
     if (item.kind === "op" && item.data?.reference === "area-entry") extra.push("area entry");
-    if (item.kind === "missing") extra.push(item.note ?? "no data in RINF");
+    if (item.kind === "missing") {
+      const state = item.data?.state as ParamState | undefined;
+      extra.push(state && state !== "notPublished" ? `${PARAM_STATE_LABELS[state]} (declared in RINF)` : item.note ?? "no data in RINF");
+    }
     if (item.kind === "border") extra.push("border link derived by Routebook");
     if (item.kind === "separation") extra.push(...separationNotes(item.data));
     if (extra.length) label.append(el("small", undefined, extra.join(" · ")));
+    const t = timesByIndex.get(row.index);
+    if (t) label.append(el("span", `rb-time${t.stop ? " stop" : ""}`, timeLabel(t, opts.timeText ?? String)));
     li.append(label);
 
     const q = el("span", `c-q q q-${item.quality}`, QUALITY_LABELS[item.quality].short);
@@ -158,7 +211,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
     strip.append(li);
   }
 
-  root.append(head, legend, gaps, strip);
+  root.append(head, legend, gaps, ...(rb.stretches?.length ? [coverageBox(rb)] : []), strip);
 }
 
 export function markSelected(root: HTMLElement, index: number): void {

@@ -18,6 +18,9 @@ import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
 import { DriveView } from "./drive-view.js";
+import { LineStrip } from "./line-strip.js";
+import { STRIP_ZOOMS } from "./line-strip-model.js";
+import { clockText, elapsedText, parseClock, timetable, type TimetableEntry } from "./timetable.js";
 import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
 import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, readiness, rinfAttribution, examplesFor } from "./datasets.js";
 import { openDatasetsDialog } from "./datasets-dialog.js";
@@ -228,6 +231,40 @@ const drive = new DriveView(map, document.querySelector(".stage") as HTMLElement
   },
   onPosition: (d) => {
     driveAt = d;
+    strip.setPosition(d);
+    syncUrl();
+  },
+});
+
+/** The line strip (the Strip tab): the route as vertical bands with times. */
+const strip = new LineStrip($("strip"), {
+  onPick: (d) => {
+    // the nearest visible routebook item, like a click in the schematic
+    if (!result) return;
+    let best: number | undefined;
+    result.routebook.items.forEach((item, index) => {
+      if (hiddenKinds.has(item.kind)) return;
+      if (best === undefined || Math.abs(item.distance - d) < Math.abs(result!.routebook.items[best]!.distance - d)) best = index;
+    });
+    if (best === undefined) return;
+    markSelected(panel, best);
+    selectedDistance = d;
+    panel.querySelector(`.rb-row[data-index="${best}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  },
+  onToggleStop: (uopid) => {
+    if (stops.has(uopid)) stops.delete(uopid);
+    else stops.add(uopid);
+    updateTimes();
+    syncUrl();
+  },
+  onPosition: (d) => {
+    driveAt = d;
+    syncUrl();
+  },
+  onSettings: () => syncUrl(),
+  onDeparture: (text) => {
+    departure = parseClock(text);
+    updateTimes();
     syncUrl();
   },
 });
@@ -398,8 +435,13 @@ let merged: { key: string; engine: RouteEngine; bundle: Bundle } | undefined;
 const MAX_TRANSIT = 6;
 /** Routes requested while a bundle was loading are superseded by the next one. */
 let computeToken = 0;
-type View = "map" | "schematic" | "drive";
-let view: View = params.get("view") === "schematic" ? "schematic" : params.get("view") === "drive" ? "drive" : "map";
+type View = "map" | "schematic" | "strip" | "drive";
+const VIEWS: View[] = ["map", "schematic", "strip", "drive"];
+let view: View = VIEWS.find((v) => v === params.get("view")) ?? "map";
+/** Timetable: departure from the origin (epoch ms today, from ?dep=08:15) and the OPs stopped at (?stops=UOPID,UOPID) */
+let departure = parseClock(params.get("dep"));
+const stops = new Set((params.get("stops") ?? "").split(",").filter(Boolean));
+let times: TimetableEntry[] | undefined;
 /** train position and autoplay from the URL, used for the first route only */
 let driveStart: { at?: number; play?: boolean } | undefined = {
   ...(params.has("at") ? { at: Number(params.get("at")) || 0 } : {}),
@@ -450,9 +492,13 @@ function syncUrl(): void {
   }
   if (view !== "map") url.searchParams.set("view", view);
   else url.searchParams.delete("view");
-  if (view === "drive" && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
+  if ((view === "drive" || view === "strip") && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
   else url.searchParams.delete("at");
   url.searchParams.delete("play");
+  setParam(url, "dep", departure !== undefined ? clockText(departure) : undefined);
+  setParam(url, "stops", stops.size ? [...stops].join(",") : undefined);
+  setParam(url, "km", view === "strip" && strip.settings.zoom !== 10 ? String(strip.settings.zoom) : undefined);
+  setParam(url, "ahead", view === "strip" && !strip.settings.aheadUp ? "down" : undefined);
   const defaultBase = pickBasemap(BASEMAPS, null, CONFIG.defaultBasemap);
   if (basemap.id !== defaultBase.id) url.searchParams.set("base", basemap.id);
   else url.searchParams.delete("base");
@@ -466,6 +512,18 @@ function syncUrl(): void {
   if (FILTER !== own) url.searchParams.set("dataset", FILTER ?? "all");
   else url.searchParams.delete("dataset");
   history.replaceState(null, "", url);
+}
+
+function setParam(url: URL, key: string, value: string | undefined): void {
+  if (value !== undefined) url.searchParams.set(key, value);
+  else url.searchParams.delete(key);
+}
+
+/** Recompute the timetable (departure, stops) and show it in the strip and the routebook. */
+function updateTimes(): void {
+  times = result ? timetable(result.routebook, { departure: departure ?? 0, stops }) : undefined;
+  strip.setTimes(times, true, departure !== undefined ? clockText : elapsedText);
+  drawRoutebook();
 }
 
 function update(): void {
@@ -486,6 +544,7 @@ function update(): void {
     (map.getSource("route") as GeoJSONSource | undefined)?.setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
+    strip.set(undefined);
     if (view === "drive") drive.start(undefined);
     updateProvenance();
     setState("ready", selection.from && !selection.to ? "Click the destination on the map, or type it." : selection.to ? "Pick the origin." : "");
@@ -576,8 +635,12 @@ async function compute(token: number): Promise<void> {
     });
     fitRoute();
     selectedDistance = undefined;
+    times = timetable(result.routebook, { departure: departure ?? 0, stops });
     drawRoutebook();
     drawSchematic();
+    strip.set(result.routebook, times);
+    strip.setTimes(times, true, departure !== undefined ? clockText : elapsedText);
+    if (driveStart?.at !== undefined && view === "strip") strip.setPosition(driveStart.at);
     if (view === "drive") {
       drive.start(result, { at: 0, play: false, ...driveStart });
       driveStart = undefined;
@@ -591,6 +654,7 @@ async function compute(token: number): Promise<void> {
     (map.getSource("route") as GeoJSONSource).setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
+    strip.set(undefined);
     if (view === "drive") drive.start(undefined);
     setState("error", e instanceof Error ? e.message : String(e));
   }
@@ -599,7 +663,7 @@ async function compute(token: number): Promise<void> {
 function drawRoutebook(): void {
   if (!result) return;
   const rb = result.routebook;
-  renderRoutebook(panel, rb, { hiddenKinds, onSelect: selectItem });
+  renderRoutebook(panel, rb, { hiddenKinds, onSelect: selectItem, ...(times ? { times, timeText: departure !== undefined ? clockText : elapsedText } : {}) });
 }
 
 /** Select a routebook item: highlight the row, mark it on the map and in the schematic. */
@@ -613,6 +677,7 @@ function selectItem(index: number): void {
   }
   selectedDistance = item.distance;
   schematicView?.moveMarker(item.distance);
+  strip.select(item.distance);
   const p = pointAtDistance(result.geometry, item.distance);
   if (!p) return;
   (map.getSource("selected") as GeoJSONSource).setData({ type: "Feature", geometry: { type: "Point", coordinates: p }, properties: {} });
@@ -684,10 +749,14 @@ function drawSchematic(): void {
 function setView(next: View): void {
   const leavingDrive = view === "drive" && next !== "drive";
   view = next;
-  $("map").hidden = next === "schematic";
+  $("map").hidden = next === "schematic" || next === "strip";
   $("schematic").hidden = next !== "schematic";
-  for (const v of ["map", "schematic", "drive"] as const) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+  $("strip").hidden = next !== "strip";
+  document.body.dataset.view = next;
+  for (const v of VIEWS) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
   if (next !== "drive") drive.stop();
+  if (next !== "strip") strip.pause();
+  else strip.shown();
   if (next === "map") {
     map.resize();
     if (mapNeedsFit || leavingDrive) fitRoute();
@@ -903,7 +972,13 @@ $("clear").addEventListener("click", () => {
 });
 $("tab-map").addEventListener("click", () => setView("map"));
 $("tab-schematic").addEventListener("click", () => setView("schematic"));
+$("tab-strip").addEventListener("click", () => setView("strip"));
 $("tab-drive").addEventListener("click", () => setView("drive"));
+strip.configure({
+  ...(STRIP_ZOOMS.some((z) => String(z) === params.get("km")) ? { zoom: Number(params.get("km")) } : {}),
+  aheadUp: params.get("ahead") !== "down",
+});
+strip.setDepartureText(departure !== undefined ? clockText(departure) : "");
 $("sch-in").addEventListener("click", () => zoomSchematic(1.5));
 $("sch-out").addEventListener("click", () => zoomSchematic(1 / 1.5));
 $("sch-fit").addEventListener("click", fitSchematic);
