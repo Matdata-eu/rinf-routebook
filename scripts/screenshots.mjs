@@ -19,6 +19,7 @@ const shots = [
   { name: "oslo-bergen", query: "from=NOOSL&to=NOBRG", viewport: { width: 1440, height: 900 } },
   { name: "oslo-drammen-tablet", query: "from=NOOSL&to=NODRM", viewport: { width: 820, height: 1180 }, select: "Lieråstunnelen" },
   { name: "oslo-drammen-schematic", query: "from=NOOSL&to=NODRM&view=schematic", viewport: { width: 1440, height: 900 }, scrollSchematic: 1300 },
+  { name: "oslo-bergen-strip", query: "from=NOOSL&to=NOBRG&view=strip&km=10&dep=08:15", viewport: { width: 1440, height: 900 } },
   { name: "oslo-drammen-print", query: "from=NOOSL&to=NODRM", viewport: { width: 900, height: 1270 }, print: true },
   { name: "drive-chase", query: "from=NOOSL&to=NODRM&view=drive&at=13900", viewport: { width: 1440, height: 900 } },
   { name: "drive-cab", query: "from=NOOSL&to=NODRM&view=drive&at=5200", viewport: { width: 1440, height: 900 }, click: '[data-camera="cab"]' },
