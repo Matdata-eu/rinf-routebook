@@ -88,6 +88,30 @@ export interface Track {
   elements: string[];
   /** SoL or OP ids (era:isPartOf). */
   partOf: string[];
+  /**
+   * Section parameters a driver needs (energy, train protection, radio, gauge), keyed by Routebook's
+   * parameter name (TRACK_PARAM_KEYS): the value as RINF labels it, several values joined by ", ".
+   */
+  params?: Record<string, string>;
+  /** Parameters the IM declares not applicable here (era:notApplicable), by the same keys. */
+  notApplicable?: string[];
+  /** Parameters the IM declares not yet available (era:notYetAvailable), by the same keys. */
+  notYetAvailable?: string[];
+  /** Phase and system separations on the track, placed by line km. */
+  separations?: Separation[];
+}
+
+/** A phase separation (era:PhaseInfo) or system separation (era:SystemSeparationInfo) on a track. */
+export interface Separation {
+  id: string;
+  kind: "phase" | "system";
+  /** line km where it starts, as the IM gives it */
+  km?: number;
+  /** metres */
+  length?: number;
+  pantographLowered?: boolean;
+  switchOffBreaker?: boolean;
+  changeSupplySystem?: boolean;
 }
 
 export type FeatureKind = "signal" | "switch" | "kmPost" | "levelCrossing";

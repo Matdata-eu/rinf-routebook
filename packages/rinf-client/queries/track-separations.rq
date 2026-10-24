@@ -1,0 +1,24 @@
+# Phase and system separations on a track, placed by line km (era:phaseInfoKm / era:systemSeparationInfoKm).
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+PREFIX era:  <http://data.europa.eu/949/>
+
+SELECT ?track ?sep ?kind ?km ?length ?pantographLowered ?switchOffBreaker ?changeSupply WHERE { GRAPH {{graph}} {
+  ?track a era:Track .
+  {
+    BIND ("phase" AS ?kind)
+    ?track era:trackPhaseInfo ?sep .
+    OPTIONAL { ?sep era:phaseInfoKm ?km }
+    OPTIONAL { ?sep era:phaseInfoLength ?length }
+    OPTIONAL { ?sep era:phaseInfoPantographLowered ?pantographLowered }
+    OPTIONAL { ?sep era:phaseInfoSwitchOffBreaker ?switchOffBreaker }
+    OPTIONAL { ?sep era:phaseInfoChangeSupplySystem ?changeSupply }
+  } UNION {
+    BIND ("system" AS ?kind)
+    ?track era:trackSystemSeparationInfo ?sep .
+    OPTIONAL { ?sep era:systemSeparationInfoKm ?km }
+    OPTIONAL { ?sep era:systemSeparationInfoLength ?length }
+    OPTIONAL { ?sep era:systemSeparationInfoPantographLowered ?pantographLowered }
+    OPTIONAL { ?sep era:systemSeparationInfoSwitchOffBreaker ?switchOffBreaker }
+    OPTIONAL { ?sep era:systemSeparationInfoChangeSupplySystem ?changeSupply }
+  }
+} }

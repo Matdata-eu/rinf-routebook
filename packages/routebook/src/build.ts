@@ -2,7 +2,8 @@ import type { OperationalPoint, PointFeature, Snapshot, Track, Tunnel } from "@r
 import type { EndpointMode, Route, RouteStep } from "@routebook/routing";
 import { RINF_GAPS } from "./gaps.js";
 import { fitKm, parseGradientProfile } from "./gradient.js";
-import type { ItemKind, Routebook, RoutebookItem } from "./types.js";
+import { CHANGE_PARAMS } from "./params.js";
+import type { ItemKind, Routebook, RoutebookItem, Stretch } from "./types.js";
 
 export type RoutebookData = Pick<Snapshot, "ops" | "lines" | "sols" | "tracks" | "features" | "tunnels">;
 
@@ -21,9 +22,11 @@ const KIND_ORDER: Record<string, number> = {
   op: 1,
   border: 2,
   line: 3,
+  change: 3.5,
   speed: 4,
   gradient: 5,
   tunnel: 6,
+  separation: 6.5,
   signal: 7,
   switch: 8,
   levelCrossing: 9,
@@ -62,6 +65,8 @@ export class RoutebookIndex {
   readonly tunnelEnds: Map<string, Array<{ tunnel: Tunnel; end: "start" | "end" }>>;
   readonly tunnelAreasByNe = new Map<string, Array<{ tunnel: Tunnel; start: number; end: number }>>();
   readonly runningTracksByNe: Map<string, Track[]>;
+  /** Sidings by element: where the route runs over a siding, its section parameters still apply. */
+  readonly sidingsByNe = new Map<string, Track[]>();
   readonly lineOfTrack = new Map<string, string>();
   readonly lineLabel: Map<string, string>;
   readonly opsByNe = new Map<string, Array<{ op: OperationalPoint; start: number; end: number; km?: number; isPoint: boolean }>>();
@@ -85,11 +90,11 @@ export class RoutebookIndex {
     }
     this.runningTracksByNe = new Map();
     for (const t of data.tracks) {
-      if (t.kind !== "running") continue;
+      const byNe = t.kind === "running" ? this.runningTracksByNe : this.sidingsByNe;
       for (const ne of t.elements) {
-        const l = this.runningTracksByNe.get(ne) ?? [];
+        const l = byNe.get(ne) ?? [];
         l.push(t);
-        this.runningTracksByNe.set(ne, l);
+        byNe.set(ne, l);
       }
     }
     const solLine = new Map(data.sols.filter((s) => s.line).map((s) => [s.id, s.line!]));
@@ -227,15 +232,17 @@ export function buildRoutebook({ index, route, from, to, endpointModes }: BuildR
     .map((i) => ({ distance: i.distance, km: i.km! }));
 
   // --- track spans: line, speed, gradient
-  const spans: Array<{ track: Track | undefined; start: number; end: number }> = [];
+  const spans: Array<{ track: Track | undefined; start: number; end: number; siding?: Track }> = [];
   for (const step of route.steps) {
     const tracks = index.runningTracksByNe.get(step.ne) ?? [];
     const prev = spans.at(-1);
     const track = tracks.find((t) => t.id === prev?.track?.id) ?? tracks[0];
+    const siding = track ? undefined : (index.sidingsByNe.get(step.ne) ?? []).find((t) => t.id === prev?.siding?.id) ?? index.sidingsByNe.get(step.ne)?.[0];
     const end = step.startDistance + Math.abs(step.to - step.from);
-    if (prev && prev.track?.id === track?.id) prev.end = end;
-    else spans.push({ track, start: step.startDistance, end });
+    if (prev && prev.track?.id === track?.id && prev.siding?.id === siding?.id) prev.end = end;
+    else spans.push({ track, start: step.startDistance, end, ...(siding ? { siding } : {}) });
   }
+  const stretches: Stretch[] = [];
 
   let lastLine: string | undefined;
   let lastSpeed: number | undefined | null = null;
@@ -254,6 +261,45 @@ export function buildRoutebook({ index, route, from, to, endpointModes }: BuildR
       lastLine = line;
       push(undefined, { kind: "line", distance: span.start, ...kmAt(span.start), label: index.lineLabel.get(line) ?? line, quality: "rinf", source: line });
     }
+    // what is in force here: the running track, else the siding the route runs over
+    const pt = t ?? span.siding;
+    const shownLine = line ?? (pt && index.lineOfTrack.get(pt.id)) ?? lastLine;
+    const k0 = kmAt(span.start).km, k1 = kmAt(span.end).km;
+    stretches.push({
+      start: span.start,
+      end: span.end,
+      ...(pt ? { track: pt.id } : {}),
+      ...(pt?.label ? { trackLabel: pt.label } : {}),
+      ...(shownLine ? { line: shownLine, lineLabel: index.lineLabel.get(shownLine) ?? shownLine } : {}),
+      ...(t?.speed !== undefined ? { speed: t.speed } : {}),
+      ...(pt?.params ? { params: pt.params } : {}),
+      ...(pt?.notApplicable?.length ? { notApplicable: pt.notApplicable } : {}),
+      ...(pt?.notYetAvailable?.length ? { notYetAvailable: pt.notYetAvailable } : {}),
+      ...(k0 !== undefined ? { kmStart: k0 } : {}),
+      ...(k1 !== undefined ? { kmEnd: k1 } : {}),
+    });
+    // phase and system separations, placed by their line km on this part of the route
+    for (const sep of pt?.separations ?? []) {
+      if (sep.km === undefined || !fit || fit.slope === 0) continue;
+      const d = span.start + (sep.km - fit(span.start)) / fit.slope;
+      if (d < span.start - 1 || d > span.end + 1) continue;
+      push(sep.id, {
+        kind: "separation",
+        distance: Math.max(span.start, Math.min(span.end, d)),
+        km: sep.km,
+        label: sep.kind === "phase" ? "Phase separation" : "System separation",
+        quality: "approximate",
+        source: sep.id,
+        data: {
+          separation: sep.kind,
+          ...(sep.length !== undefined ? { length: sep.length } : {}),
+          ...(sep.pantographLowered !== undefined ? { pantographLowered: sep.pantographLowered } : {}),
+          ...(sep.switchOffBreaker !== undefined ? { switchOffBreaker: sep.switchOffBreaker } : {}),
+          ...(sep.changeSupplySystem !== undefined ? { changeSupplySystem: sep.changeSupplySystem } : {}),
+        },
+        note: "position interpolated from km anchors (era:phaseInfoKm / era:systemSeparationInfoKm)",
+      });
+    }
     if (!t) continue;
 
     const speed = t.speed;
@@ -261,7 +307,7 @@ export function buildRoutebook({ index, route, from, to, endpointModes }: BuildR
       lastSpeed = speed;
       push(undefined, speed !== undefined
         ? { kind: "speed", distance: span.start, ...kmAt(span.start), label: `${speed} km/h`, quality: "rinf", source: t.id, data: { speed }, note: "track-level era:maximumPermittedSpeed, not a speed profile" }
-        : { kind: "missing", distance: span.start, label: "speed", quality: "missing", source: t.id, data: { field: "speed" }, note: "track has no era:maximumPermittedSpeed" });
+        : { kind: "missing", distance: span.start, label: "speed", quality: "missing", source: t.id, data: { field: "speed", state: t.notYetAvailable?.includes("speed") ? "notYetAvailable" : t.notApplicable?.includes("speed") ? "notApplicable" : "notPublished" }, note: t.notYetAvailable?.includes("speed") ? "the IM declares era:maximumPermittedSpeed not yet available for this track" : "track has no era:maximumPermittedSpeed" });
     }
 
     if (!t.gradientProfile) continue;
@@ -305,6 +351,8 @@ export function buildRoutebook({ index, route, from, to, endpointModes }: BuildR
     }
   }
 
+  for (const c of changeItems(mergeStretches(stretches))) push(undefined, c);
+
   push(undefined, { kind: "destination", distance: route.length, label: to.name, quality: "rinf", source: to.id, data: { uopid: to.uopid } });
 
   return {
@@ -314,8 +362,63 @@ export function buildRoutebook({ index, route, from, to, endpointModes }: BuildR
     route,
     length: route.length,
     items: sortItems(items),
+    stretches: mergeStretches(stretches),
     gaps: [...RINF_GAPS],
   };
+}
+
+const sameList = (a: string[] | undefined, b: string[] | undefined) => (a ?? []).join("|") === (b ?? []).join("|");
+const sameParams = (a: Record<string, string> | undefined, b: Record<string, string> | undefined) => JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+
+/** Join neighbouring stretches with the same line, speed and parameters (one track after another). */
+export function mergeStretches(stretches: Stretch[]): Stretch[] {
+  const out: Stretch[] = [];
+  for (const s of stretches) {
+    const prev = out.at(-1);
+    if (
+      prev && prev.line === s.line && prev.speed === s.speed && prev.dataset === s.dataset &&
+      sameParams(prev.params, s.params) && sameList(prev.notApplicable, s.notApplicable) && sameList(prev.notYetAvailable, s.notYetAvailable) &&
+      (prev.track === undefined) === (s.track === undefined)
+    ) {
+      out[out.length - 1] = { ...prev, end: s.end, ...(s.kmEnd !== undefined ? { kmEnd: s.kmEnd } : {}), ...(prev.track !== s.track ? { trackLabel: undefined } : {}) };
+      if (out.at(-1)!.trackLabel === undefined) delete out.at(-1)!.trackLabel;
+    } else out.push({ ...s });
+  }
+  return out;
+}
+
+/** Stretches shorter than this do not start a new value: a short station track or a crossover is not a change. */
+export const MIN_CHANGE_STRETCH = 100;
+
+/**
+ * "change" items where a section parameter (energy, class B, ETCS, radio, gauge) takes another value
+ * along the route. Only known values are compared: a stretch where RINF says nothing neither starts
+ * nor ends a value.
+ */
+export function changeItems(stretches: Stretch[]): RoutebookItem[] {
+  const out: RoutebookItem[] = [];
+  for (const { param, label, read } of CHANGE_PARAMS) {
+    let last: string | undefined;
+    for (const s of stretches) {
+      if (s.end - s.start < MIN_CHANGE_STRETCH && stretches.length > 1) continue;
+      const v = read(s);
+      if (v === undefined) continue;
+      if (last !== undefined && v !== last) {
+        out.push({
+          kind: "change",
+          distance: s.start,
+          ...(s.kmStart !== undefined ? { km: s.kmStart } : {}),
+          label: `${label}: ${last} → ${v}`,
+          quality: "derived",
+          ...(s.track ? { source: s.track } : {}),
+          data: { param, from: last, to: v },
+          note: "where the track parameters change; the exact position is at the track boundary",
+        });
+      }
+      last = v;
+    }
+  }
+  return out;
 }
 
 export const ITEM_KINDS: ItemKind[] = Object.keys(KIND_ORDER) as ItemKind[];
@@ -366,5 +469,9 @@ export function addBorderItems(rb: Routebook, networks: NetworkLabels): Routeboo
     });
     last = ds;
   }
-  return { ...rb, items: sortItems(items) };
+  const stretches = rb.stretches?.map((st) => {
+    const dataset = datasetAt(Math.min(st.end, st.start + 0.5));
+    return dataset ? { ...st, dataset } : st;
+  });
+  return { ...rb, items: sortItems(items), ...(stretches ? { stretches } : {}) };
 }

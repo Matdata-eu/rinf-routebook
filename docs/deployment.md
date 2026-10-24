@@ -123,6 +123,29 @@ The proxy only fetches the layers in the configuration, and with `bounds` only t
 
 **Esri World Imagery** has a shortcut: set `ESRI_API_KEY` (an [ArcGIS Location Platform](https://location.arcgis.com) API key with the Basemaps privilege) and an **Aerial** background appears, proxied.
 
+### A self-hosted street map
+
+The built-in **Streets** background loads its tiles from OpenStreetMap's servers, which is fine for a test but not for production use, and which does not work offline. Instead, serve the street map yourself from one file: a [Protomaps](https://protomaps.com) basemap in the [PMTiles](https://docs.protomaps.com/pmtiles/) format, vector tiles of OpenStreetMap (ODbL) for the area you need. The app draws it with the Protomaps style, light or dark with the theme, and the browser asks your server, nobody else, for the map.
+
+1. Get the `pmtiles` command line tool from [go-pmtiles](https://github.com/protomaps/go-pmtiles/releases) and cut your area out of a daily planet build (see [maps.protomaps.com/builds](https://maps.protomaps.com/builds/) for the dates):
+
+   ```bash
+   # Norway and Sweden; the planet build goes to zoom 15, a lower --maxzoom makes the file much smaller
+   pmtiles extract https://build.protomaps.com/20261020.pmtiles nordics.pmtiles --bbox=4.5,55.0,24.5,71.5 --maxzoom=14
+   ```
+
+2. Put the file in the `basemap` folder of the data folder: `/data/basemap/` in the container (with Docker Compose, put it in `./basemap/` and uncomment the `./basemap:/data/basemap:ro` line in `docker-compose.yml`), `./data/basemap/` without Docker; `ROUTEBOOK_BASEMAP_DIR` names another folder. The server serves that folder at `basemap/`, with the range requests PMTiles needs.
+
+3. Point the app at it: `ROUTEBOOK_BASEMAP_PMTILES=nordics.pmtiles` in `.env` replaces the OpenStreetMap tiles as **Streets**. Or in `config/config.json`, with your own id, label and language of the place names:
+
+   ```json
+   { "basemaps": [{ "id": "map", "label": "Streets", "type": "pmtiles", "url": "basemap/nordics.pmtiles", "lang": "nb" }] }
+   ```
+
+The place names need fonts. By default they come from the Protomaps font server (`protomaps.github.io`); to serve them yourself too, copy the `fonts` folder of [basemaps-assets](https://github.com/protomaps/basemaps-assets) into the basemap folder and set `"glyphs": "basemap/fonts/{fontstack}/{range}.pbf"`. The station labels then use the same fonts (Noto Sans).
+
+A new extract should get a new file name: the server lets browsers keep basemap files for a day.
+
 ### Layer fields
 
 `basemaps` appear in the Map layers menu under **Background**, after the built-in street map; one is shown at a time. `overlays` are listed after OpenRailwayMap and toggled on and off on top of the background, under the railway lines; `description` adds a line under the label.
@@ -130,6 +153,9 @@ The proxy only fetches the layers in the configuration, and with `bounds` only t
 | Field | Meaning |
 |---|---|
 | `id` | Letters, digits, `-` and `_`. Used in the URL (`?base=ortho`, `?layers=catenary`). A basemap with the id `map` or `satellite` replaces that built-in. |
+| `type` | Basemaps only: `"pmtiles"` for a self-hosted vector basemap (see [above](#a-self-hosted-street-map)); raster tiles otherwise. |
+| `url` | With `type` `"pmtiles"`: the file, e.g. `"basemap/nordics.pmtiles"` (relative to the app). |
+| `lang` | With `type` `"pmtiles"`: language of the place names (default `en`; the local name where there is none). |
 | `label` | Name in the Map layers menu (default: the id). |
 | `description` | One line under the label in the menu. |
 | `tiles` | One or more URL templates (several are used in turn). Placeholders: `{z}`, `{x}`, `{y}`, `{quadkey}` (Bing style) and `{bbox-epsg-3857}` (WMS `GetMap` in Web Mercator). WMTS works through its REST/KVP template, e.g. `.../{z}/{y}/{x}.png`. |
@@ -154,11 +180,23 @@ Other top-level fields:
 | `defaultBasemap` | Background opened when the URL has none, e.g. `"ortho"`. |
 | `builtinBasemaps` | `true` (default) for Streets, `false` for none, or a list such as `["map", "satellite"]` to add the coarse Sentinel-2 background. |
 | `builtinOverlays` | `true` (default) for OpenRailwayMap, `false` for none, or a list such as `["orm"]`. |
-| `glyphs` | Font URL template for the station labels (MapLibre `glyphs`); the default is the MapLibre demo server. Self-host it for production or offline use. |
+| `glyphs` | Font URL template for the station labels (MapLibre `glyphs`); the default is the MapLibre demo server, or the Protomaps font server with a PMTiles basemap. Self-host it for production or offline use. |
+| `labelFont` | Font of the station labels; it must be in `glyphs` (default `Open Sans Semibold`, or `Noto Sans Medium` with a PMTiles basemap). |
+| `offline` | `false` switches the offline app off (no service worker, nothing kept in the browser); see [Offline use](#offline-use). |
 | `privacy` | Privacy statement, see [Privacy statement](#privacy-statement). |
 | `examples` | Example routes on the start panel per dataset: `{"bel": [{"from": "BEBRU", "to": "BEANT", "label": "Brussels → Antwerp"}]}`. |
 | `disclaimer` | Demo disclaimer, see [Disclaimer](#disclaimer): `{ "publisher": "..." }`, custom wording, or `false`. |
 | `atlasUrl` | RINF Atlas instance the Datasets dialog links to (default `https://rinf-atlas.matdata.eu`); `false` for no links. |
+
+## Offline use
+
+RouteBook is an installable web app (PWA): browsers offer to install it, and a service worker keeps the app and what the user has opened, so it works without a network, on a tablet in a cab for example.
+
+- The app itself is kept when it is first opened (and replaced when you deploy a new version).
+- The RINF data (the network index and the dataset bundles) is fetched from the server whenever there is a network, so it is always current, and the last copy is used offline. Routes in a network the user has opened at least once work offline.
+- Map tiles are kept as they are viewed, up to a few thousand: those of a self-hosted PMTiles basemap and of proxied layers. Tiles of other providers (OpenStreetMap, OpenRailwayMap, a WMS without `proxy`) are left to the browser and the provider's terms, so with them the background is blank offline. A [self-hosted street map](#a-self-hosted-street-map) is the way to have a map offline.
+
+The status line says when the app is offline. `"offline": false` in the configuration switches all of this off.
 
 ## Disclaimer
 
@@ -190,9 +228,9 @@ The shortcuts `ROUTEBOOK_PRIVACY_URL` and `ROUTEBOOK_PRIVACY_FILE` do the same f
 
 What the software itself does, as input for your statement (check it against your own deployment, proxy and hosting):
 
-- No accounts, no cookies, no analytics or tracking. The routebook filter choices are kept in the browser's local storage.
+- No accounts, no cookies, no analytics or tracking. The routebook filter choices are kept in the browser's local storage, and the offline app keeps the app, the RINF data and map tiles the user has viewed in the browser's cache storage (see [Offline use](#offline-use)).
 - The Routebook server keeps no logs of its own beyond start-up messages and tile proxy errors; your reverse proxy or hosting may log requests.
-- The browser loads map tiles and label fonts directly from their providers (by default OpenStreetMap, EOX and the MapLibre demo font server), which see the user's IP address and the map area viewed. Layers with `"proxy": true` are fetched by your server instead, so the provider sees the server, not the user.
+- The browser loads map tiles and label fonts directly from their providers (by default OpenStreetMap, EOX and the MapLibre demo font server), which see the user's IP address and the map area viewed. Layers with `"proxy": true` are fetched by your server instead, so the provider sees the server, not the user; a self-hosted PMTiles basemap and fonts involve no provider at all.
 - The RINF data is fetched by the server from the ERA endpoint; the browser does not contact ERA.
 
 ## All settings
@@ -208,6 +246,8 @@ Environment variables of the server and the container:
 | `ROUTEBOOK_TITLE` | `RouteBook` | Same as `title`. |
 | `ROUTEBOOK_DEFAULT_BASEMAP` | first background | Same as `defaultBasemap`. |
 | `ESRI_API_KEY` | none | Adds the proxied Esri World Imagery background. |
+| `ROUTEBOOK_BASEMAP_PMTILES` | none | A PMTiles file in the basemap folder that replaces the OpenStreetMap tiles as **Streets**, see [A self-hosted street map](#a-self-hosted-street-map). |
+| `ROUTEBOOK_BASEMAP_DIR` | `<data folder>/basemap` | Folder served at `basemap/`: PMTiles files and fonts. |
 | `ROUTEBOOK_PRIVACY_URL`, `ROUTEBOOK_PRIVACY_FILE` | none | Privacy statement link or file, see [above](#privacy-statement). |
 | `ROUTEBOOK_CONFIG_FILE` | `/config/config.json` in the image, `./config.json` otherwise | The configuration file. |
 | `ROUTEBOOK_CONFIG` | none | The configuration as JSON in one variable; its keys replace those of the file. |

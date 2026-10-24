@@ -244,7 +244,7 @@ export function runningTime(profile: LimitSpan[], from: number, to: number, trai
 // ---------------------------------------------------------------- what is ahead
 
 /** Kinds a driver is told about ahead, like turn instructions in a satnav. */
-export const CUE_KINDS = new Set(["signal", "op", "destination", "speed", "tunnel", "levelCrossing", "border"]);
+export const CUE_KINDS = new Set(["signal", "op", "destination", "speed", "tunnel", "levelCrossing", "border", "change", "separation"]);
 
 export interface Cue {
   item: RoutebookItem;

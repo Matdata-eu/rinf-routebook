@@ -531,6 +531,10 @@ function cueText(item: RoutebookItem): string {
       return item.label ? `Level crossing ${item.label}` : "Level crossing";
     case "border":
       return `Infrastructure manager change: ${item.label ?? ""}`;
+    case "separation": {
+      const what = [item.data?.switchOffBreaker === true ? "main breaker off" : "", item.data?.pantographLowered === true ? "pantograph down" : ""].filter(Boolean).join(", ");
+      return `${item.label ?? "Separation"}${what ? ` (${what})` : ""}`;
+    }
     default:
       return item.label ?? item.kind;
   }
@@ -558,6 +562,8 @@ function cueIcon(item: RoutebookItem): Element {
     op: `<rect x="5" y="9" width="30" height="20" rx="4" fill="#1c2633"/><path d="M11 23 h18" stroke="#fff" stroke-width="2.5"/><path d="M20 29 v9" stroke="#1c2633" stroke-width="3"/>`,
     destination: `<path d="M10 37 V4" stroke="#1c2633" stroke-width="3"/><path d="M11 5 h22 l-5 7 l5 7 h-22 z" fill="#0563bb"/>`,
     tunnel: `<path d="M3 36 V20 A17 17 0 0 1 37 20 V36" fill="#56606c"/><path d="M10 36 V22 A10 10 0 0 1 30 22 V36" fill="#1c2633"/>`,
+    separation: `<path d="M2 10 H38" stroke="#1c2633" stroke-width="2.5"/><path d="M13 4 V16 M27 4 V16" stroke="#1c2633" stroke-width="3"/><path d="M18 20 h6 l-4 7 h5 l-8 10 l3 -7 h-4 z" fill="#f2a900" stroke="#1c2633" stroke-width="1"/>`,
+    change: `<path d="M5 20 H33 M24 11 L33 20 L24 29" fill="none" stroke="#0563bb" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>`,
     levelCrossing: `<path d="M7 7 L33 33 M33 7 L7 33" stroke="#c0392b" stroke-width="6" stroke-linecap="round"/><path d="M7 7 L33 33 M33 7 L7 33" stroke="#fff" stroke-width="2" stroke-linecap="round"/>`,
   };
   return svg("0 0 40 40", bodies[item.kind] ?? `<circle cx="20" cy="20" r="8" fill="#56606c"/>`, "drv-icon");

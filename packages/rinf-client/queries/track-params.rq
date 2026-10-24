@@ -1,0 +1,42 @@
+# Track-level parameters a driver needs per section: energy, train protection, radio, gauge.
+# {{graph}} is replaced by the country named graph IRI (Norway: <http://data.europa.eu/949/graph/0076>).
+# ?key is Routebook's name for the parameter (see packages/routebook/src/params.ts); ?label is the
+# SKOS preferred label of a concept value, from ERA's RINF code lists.
+PREFIX era:  <http://data.europa.eu/949/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+
+SELECT ?track ?key ?v ?label WHERE {
+  GRAPH {{graph}} {
+    ?track a era:Track .
+    {
+      VALUES (?key ?p) {
+        ("protectionLegacy" era:protectionLegacySystem)
+        ("otherProtection" era:otherTrainProtection)
+        ("gsmR" era:gsmRVersion)
+        ("legacyRadio" era:legacyRadioSystem)
+        ("gauge" era:wheelSetGauge)
+        ("gauging" era:gaugingProfile)
+        ("pantographHead" era:tsiPantographHead)
+      }
+      ?track ?p ?v .
+    } UNION {
+      VALUES (?key ?p ?q) {
+        ("contactLine" era:contactLineSystem era:contactLineSystemType)
+        ("energySupply" era:contactLineSystem era:energySupplySystem)
+        ("maxTrainCurrent" era:contactLineSystem era:maxTrainCurrent)
+        ("etcsLevel" era:etcs era:etcsLevelType)
+        ("etcsBaseline" era:etcs era:etcsBaseline)
+        ("lineCategory" era:trackLoadCapability era:loadCapabilityLineCategory)
+        ("raisedPantographs.number" era:trackRaisedPantographsDistanceAndSpeed era:raisedPantographsNumber)
+        ("raisedPantographs.distance" era:trackRaisedPantographsDistanceAndSpeed era:raisedPantographsDistance)
+        ("raisedPantographs.speed" era:trackRaisedPantographsDistanceAndSpeed era:raisedPantographsSpeed)
+      }
+      ?track ?p ?o .
+      ?o ?q ?v .
+    }
+  }
+  OPTIONAL {
+    GRAPH <http://data.europa.eu/949/graph/rinf/skos> { ?v skos:prefLabel ?label }
+    FILTER (LANG(?label) = "en" || LANG(?label) = "")
+  }
+}

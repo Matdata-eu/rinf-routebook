@@ -18,7 +18,12 @@ import { fitZoom, renderSchematic, type SchematicView } from "./schematic.js";
 import type { Schematic } from "@routebook/schematic";
 import { workerSolver } from "./solver-client.js";
 import { DriveView } from "./drive-view.js";
-import { basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap, type Basemap } from "./basemaps.js";
+import { LineStrip } from "./line-strip.js";
+import { STRIP_ZOOMS } from "./line-strip-model.js";
+import { clockText, elapsedText, parseClock, timetable, type TimetableEntry } from "./timetable.js";
+import { Protocol as PMTilesProtocol } from "pmtiles";
+import { basemaps, headerTransform, isBasemapLayer, labelFonts, loadRuntimeConfig, overlays, pickBasemap, vectorLayers, type Basemap } from "./basemaps.js";
+import type { LayerSpecification } from "maplibre-gl";
 import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provenanceText, readiness, rinfAttribution, examplesFor } from "./datasets.js";
 import { openDatasetsDialog } from "./datasets-dialog.js";
 import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
@@ -54,14 +59,24 @@ const OVERLAYS = overlays(CONFIG, location.href);
 let basemap = pickBasemap(BASEMAPS, params.get("base"), CONFIG.defaultBasemap);
 const shownOverlays = new Set(params.has("layers") ? (params.get("layers") ?? "").split(",").filter(Boolean) : OVERLAYS.filter((o) => o.visible).map((o) => o.id));
 
+// self-hosted vector basemaps: one Protomaps PMTiles file, read with HTTP range requests
+if (BASEMAPS.some((b) => b.vector)) maplibregl.addProtocol("pmtiles", new PMTilesProtocol().tile);
+/** key-free glyphs for OP labels (and a vector basemap's place names); without network the labels are simply not drawn */
+const FONTS = labelFonts(CONFIG, BASEMAPS);
+
+/** The style layers of a background: one raster layer, or the layers of a vector basemap in the current theme. */
+function basemapLayers(b: Basemap): LayerSpecification[] {
+  if (b.vector) return vectorLayers(b, currentTheme());
+  return [{ id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(b.paint, b.aerial, currentTheme()) }];
+}
+
 const style: StyleSpecification = {
   version: 8,
-  // key-free glyphs for OP labels; without network the labels are simply not drawn
-  glyphs: CONFIG.glyphs ?? "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  glyphs: FONTS.glyphs,
   sources: { basemap: basemap.source, ...Object.fromEntries(OVERLAYS.map((o) => [`overlay-${o.id}`, o.source])) },
   layers: [
     { id: "bg", type: "background", paint: { "background-color": mapColors().bg } },
-    { id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()) },
+    ...basemapLayers(basemap),
     ...OVERLAYS.map((o) => ({
       id: `overlay-${o.id}`,
       type: "raster" as const,
@@ -97,7 +112,9 @@ function paintMap(): void {
   const c = mapColors();
   const set = (layer: string, prop: string, value: unknown) => map.getLayer(layer) && map.setPaintProperty(layer, prop, value);
   if (map.getLayer("bg") && !document.body.classList.contains("driving")) set("bg", "background-color", c.bg);
-  for (const [k, v] of Object.entries(themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()))) set("basemap", k, v);
+  // a vector basemap has a light and a dark style: swap its layers
+  if (basemap.vector && map.getLayer("bg")) replaceBasemapLayers(false);
+  else for (const [k, v] of Object.entries(themedRasterPaint(basemap.paint, basemap.aerial, currentTheme()))) set("basemap", k, v);
   set("sols", "line-color", networkColor(basemap));
   set("route-casing", "line-color", c.casing);
   set("route", "line-color", c.route);
@@ -116,16 +133,23 @@ function opColor(c: ReturnType<typeof mapColors>): maplibregl.ExpressionSpecific
   return ["case", ["!=", ["get", "routable"], 1], c.unroutable, ["==", ["get", "station"], 1], c.station, c.op];
 }
 
+/** Put the current background's layers in place, under the overlays and the railway layers (and its source too, when it changed). */
+function replaceBasemapLayers(newSource: boolean): void {
+  for (const l of map.getStyle().layers ?? []) if (isBasemapLayer(l.id)) map.removeLayer(l.id);
+  if (newSource) {
+    if (map.getSource("basemap")) map.removeSource("basemap");
+    map.addSource("basemap", basemap.source);
+  }
+  // under the overlays, or under the railway lines when there are none
+  const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
+  for (const l of basemapLayers(basemap)) map.addLayer(l, above);
+}
+
 /** Swap the background imagery in place, under the railway layers. */
 function setBasemap(next: Basemap): void {
   if (next.id === basemap.id) return;
   basemap = next;
-  if (map.getLayer("basemap")) map.removeLayer("basemap");
-  if (map.getSource("basemap")) map.removeSource("basemap");
-  map.addSource("basemap", next.source);
-  // under the overlays, or under the railway lines when there are none
-  const above = OVERLAYS.length ? `overlay-${OVERLAYS[0]!.id}` : map.getLayer("sols") ? "sols" : undefined;
-  map.addLayer({ id: "basemap", type: "raster", source: "basemap", paint: themedRasterPaint(next.paint, next.aerial, currentTheme()) }, above);
+  replaceBasemapLayers(true);
   if (map.getLayer("sols")) map.setPaintProperty("sols", "line-color", networkColor(next));
   document.querySelectorAll<HTMLInputElement>(".layers-menu input[name=basemap]").forEach((r) => (r.checked = r.value === next.id));
   syncUrl();
@@ -228,6 +252,40 @@ const drive = new DriveView(map, document.querySelector(".stage") as HTMLElement
   },
   onPosition: (d) => {
     driveAt = d;
+    strip.setPosition(d);
+    syncUrl();
+  },
+});
+
+/** The line strip (the Strip tab): the route as vertical bands with times. */
+const strip = new LineStrip($("strip"), {
+  onPick: (d) => {
+    // the nearest visible routebook item, like a click in the schematic
+    if (!result) return;
+    let best: number | undefined;
+    result.routebook.items.forEach((item, index) => {
+      if (hiddenKinds.has(item.kind)) return;
+      if (best === undefined || Math.abs(item.distance - d) < Math.abs(result!.routebook.items[best]!.distance - d)) best = index;
+    });
+    if (best === undefined) return;
+    markSelected(panel, best);
+    selectedDistance = d;
+    panel.querySelector(`.rb-row[data-index="${best}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  },
+  onToggleStop: (uopid) => {
+    if (stops.has(uopid)) stops.delete(uopid);
+    else stops.add(uopid);
+    updateTimes();
+    syncUrl();
+  },
+  onPosition: (d) => {
+    driveAt = d;
+    syncUrl();
+  },
+  onSettings: () => syncUrl(),
+  onDeparture: (text) => {
+    departure = parseClock(text);
+    updateTimes();
     syncUrl();
   },
 });
@@ -288,7 +346,7 @@ function addLayers(net: Network): void {
     source: "ops",
     minzoom: 8,
     ...withFilter(datasetFilter(["==", ["get", "station"], 1])),
-    layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Semibold"], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
+    layout: { "text-field": ["get", "name"], "text-font": [FONTS.font], "text-size": 12, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
     paint: { "text-color": ["case", ["==", ["get", "routable"], 1], c.label, c.unroutable], "text-halo-color": c.halo, "text-halo-width": 1.5 },
   });
   map.addLayer({ id: "endpoints", type: "circle", source: "endpoints", paint: { "circle-radius": 9, "circle-color": ["match", ["get", "role"], "from", c.from, c.to], "circle-stroke-color": c.halo, "circle-stroke-width": 3 } });
@@ -398,8 +456,13 @@ let merged: { key: string; engine: RouteEngine; bundle: Bundle } | undefined;
 const MAX_TRANSIT = 6;
 /** Routes requested while a bundle was loading are superseded by the next one. */
 let computeToken = 0;
-type View = "map" | "schematic" | "drive";
-let view: View = params.get("view") === "schematic" ? "schematic" : params.get("view") === "drive" ? "drive" : "map";
+type View = "map" | "schematic" | "strip" | "drive";
+const VIEWS: View[] = ["map", "schematic", "strip", "drive"];
+let view: View = VIEWS.find((v) => v === params.get("view")) ?? "map";
+/** Timetable: departure from the origin (epoch ms today, from ?dep=08:15) and the OPs stopped at (?stops=UOPID,UOPID) */
+let departure = parseClock(params.get("dep"));
+const stops = new Set((params.get("stops") ?? "").split(",").filter(Boolean));
+let times: TimetableEntry[] | undefined;
 /** train position and autoplay from the URL, used for the first route only */
 let driveStart: { at?: number; play?: boolean } | undefined = {
   ...(params.has("at") ? { at: Number(params.get("at")) || 0 } : {}),
@@ -450,9 +513,13 @@ function syncUrl(): void {
   }
   if (view !== "map") url.searchParams.set("view", view);
   else url.searchParams.delete("view");
-  if (view === "drive" && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
+  if ((view === "drive" || view === "strip") && driveAt !== undefined && selection.from && selection.to) url.searchParams.set("at", String(Math.round(driveAt)));
   else url.searchParams.delete("at");
   url.searchParams.delete("play");
+  setParam(url, "dep", departure !== undefined ? clockText(departure) : undefined);
+  setParam(url, "stops", stops.size ? [...stops].join(",") : undefined);
+  setParam(url, "km", view === "strip" && strip.settings.zoom !== 10 ? String(strip.settings.zoom) : undefined);
+  setParam(url, "ahead", view === "strip" && !strip.settings.aheadUp ? "down" : undefined);
   const defaultBase = pickBasemap(BASEMAPS, null, CONFIG.defaultBasemap);
   if (basemap.id !== defaultBase.id) url.searchParams.set("base", basemap.id);
   else url.searchParams.delete("base");
@@ -466,6 +533,18 @@ function syncUrl(): void {
   if (FILTER !== own) url.searchParams.set("dataset", FILTER ?? "all");
   else url.searchParams.delete("dataset");
   history.replaceState(null, "", url);
+}
+
+function setParam(url: URL, key: string, value: string | undefined): void {
+  if (value !== undefined) url.searchParams.set(key, value);
+  else url.searchParams.delete(key);
+}
+
+/** Recompute the timetable (departure, stops) and show it in the strip and the routebook. */
+function updateTimes(): void {
+  times = result ? timetable(result.routebook, { departure: departure ?? 0, stops }) : undefined;
+  strip.setTimes(times, true, departure !== undefined ? clockText : elapsedText);
+  drawRoutebook();
 }
 
 function update(): void {
@@ -486,6 +565,7 @@ function update(): void {
     (map.getSource("route") as GeoJSONSource | undefined)?.setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
+    strip.set(undefined);
     if (view === "drive") drive.start(undefined);
     updateProvenance();
     setState("ready", selection.from && !selection.to ? "Click the destination on the map, or type it." : selection.to ? "Pick the origin." : "");
@@ -576,8 +656,12 @@ async function compute(token: number): Promise<void> {
     });
     fitRoute();
     selectedDistance = undefined;
+    times = timetable(result.routebook, { departure: departure ?? 0, stops });
     drawRoutebook();
     drawSchematic();
+    strip.set(result.routebook, times);
+    strip.setTimes(times, true, departure !== undefined ? clockText : elapsedText);
+    if (driveStart?.at !== undefined && view === "strip") strip.setPosition(driveStart.at);
     if (view === "drive") {
       drive.start(result, { at: 0, play: false, ...driveStart });
       driveStart = undefined;
@@ -591,6 +675,7 @@ async function compute(token: number): Promise<void> {
     (map.getSource("route") as GeoJSONSource).setData(empty);
     panel.replaceChildren(intro());
     drawSchematic();
+    strip.set(undefined);
     if (view === "drive") drive.start(undefined);
     setState("error", e instanceof Error ? e.message : String(e));
   }
@@ -599,7 +684,7 @@ async function compute(token: number): Promise<void> {
 function drawRoutebook(): void {
   if (!result) return;
   const rb = result.routebook;
-  renderRoutebook(panel, rb, { hiddenKinds, onSelect: selectItem });
+  renderRoutebook(panel, rb, { hiddenKinds, onSelect: selectItem, ...(times ? { times, timeText: departure !== undefined ? clockText : elapsedText } : {}) });
 }
 
 /** Select a routebook item: highlight the row, mark it on the map and in the schematic. */
@@ -613,6 +698,7 @@ function selectItem(index: number): void {
   }
   selectedDistance = item.distance;
   schematicView?.moveMarker(item.distance);
+  strip.select(item.distance);
   const p = pointAtDistance(result.geometry, item.distance);
   if (!p) return;
   (map.getSource("selected") as GeoJSONSource).setData({ type: "Feature", geometry: { type: "Point", coordinates: p }, properties: {} });
@@ -684,10 +770,14 @@ function drawSchematic(): void {
 function setView(next: View): void {
   const leavingDrive = view === "drive" && next !== "drive";
   view = next;
-  $("map").hidden = next === "schematic";
+  $("map").hidden = next === "schematic" || next === "strip";
   $("schematic").hidden = next !== "schematic";
-  for (const v of ["map", "schematic", "drive"] as const) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+  $("strip").hidden = next !== "strip";
+  document.body.dataset.view = next;
+  for (const v of VIEWS) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
   if (next !== "drive") drive.stop();
+  if (next !== "strip") strip.pause();
+  else strip.shown();
   if (next === "map") {
     map.resize();
     if (mapNeedsFit || leavingDrive) fitRoute();
@@ -864,7 +954,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
 
 function buildFilters(): void {
   const box = $("filters");
-  for (const kind of ["line", "speed", "gradient", "op", "tunnel", "signal", "switch", "levelCrossing", "kmPost"]) {
+  for (const kind of ["line", "change", "speed", "gradient", "op", "tunnel", "separation", "signal", "switch", "levelCrossing", "kmPost"]) {
     const label = document.createElement("label");
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -903,7 +993,13 @@ $("clear").addEventListener("click", () => {
 });
 $("tab-map").addEventListener("click", () => setView("map"));
 $("tab-schematic").addEventListener("click", () => setView("schematic"));
+$("tab-strip").addEventListener("click", () => setView("strip"));
 $("tab-drive").addEventListener("click", () => setView("drive"));
+strip.configure({
+  ...(STRIP_ZOOMS.some((z) => String(z) === params.get("km")) ? { zoom: Number(params.get("km")) } : {}),
+  aheadUp: params.get("ahead") !== "down",
+});
+strip.setDepartureText(departure !== undefined ? clockText(departure) : "");
 $("sch-in").addEventListener("click", () => zoomSchematic(1.5));
 $("sch-out").addEventListener("click", () => zoomSchematic(1 / 1.5));
 $("sch-fit").addEventListener("click", fitSchematic);
@@ -1135,6 +1231,18 @@ Promise.all([loadIndexOrBundle(), stylePromise])
     update();
   })
   .catch((e: unknown) => setState("error", e instanceof Error ? e.message : String(e)));
+
+// offline: the service worker of the build (not in the dev server, where it would cache stale modules)
+if (import.meta.env.PROD && "serviceWorker" in navigator && CONFIG.offline !== false) {
+  // main.ts awaits the configuration first, so the page may have loaded already
+  const register = () => void navigator.serviceWorker.register(`${BASE}sw.js`, { scope: BASE }).catch(() => undefined);
+  if (document.readyState === "complete") register();
+  else window.addEventListener("load", register);
+}
+const offlineNote = () => document.body.classList.toggle("offline", !navigator.onLine);
+window.addEventListener("online", offlineNote);
+window.addEventListener("offline", offlineNote);
+offlineNote();
 
 // print the gap list expanded
 window.addEventListener("beforeprint", () => document.querySelectorAll<HTMLDetailsElement>(".rb-gaps").forEach((d) => (d.open = true)));

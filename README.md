@@ -16,13 +16,17 @@ It works for any network the [ERA knowledge graph](https://graph.data.era.europa
 
 - **Route on the micro topology** between any two operational points, in the browser, in tens of milliseconds (73 ms for Oslo S → Bergen, 455 km and 3 800 items).
 - **Routebook strip** with speed and gradient bands, line km, signals, switches, tunnels, level crossings and km posts, a quality flag per item (from RINF, derived, approximate, missing), and a print / PDF layout.
+- **Section parameters** from RINF along the route: energy supply and contact line, class B and other train protection, ETCS level and baseline, GSM-R, gauge, gauging, line category and raised pantographs, with an item where one changes and the phase and system separations. Where a value is missing, the app says whether the infrastructure manager declares it *not applicable* or *not yet available*, or RINF does not say.
+- **Line strip**: the route as vertical bands like a paper route book (speed, gradient, energy, class B, ETCS, GSM-R, tunnels), 2 to 60 km per screen, ahead up or down, with a section card for any point and a train to follow ([screenshot](docs/screenshots/oslo-bergen-strip.png)).
+- **Timetable**: set a departure time and the stops for passing and stop times at every operational point, from a simulated run at the RINF maximum speeds.
 - **Schematic** track diagram of the route, with the surrounding tracks and switches on the correct side.
 - **Drive** view: a satnav-style camera follows a train along the route, with the next signal, speed change or station ahead.
 - **All of RINF at once**: the map and the search cover every fetched dataset from a small index; a network's data is loaded the moment a route needs it, and the **Network** picker narrows the view to one.
 - **Routes across networks**: RINF has no connections between infrastructure managers, so Routebook derives border links (shared border points, or border points within 300 m) and routes Oslo to Stockholm over them, with an *Infrastructure manager change* item in the routebook and every dataset's publication in the footer.
 - **Know your dataset**: the app names the ERA publication (infrastructure manager, dataset id, publication date, fetch time) behind every network and every printed routebook, lists all datasets with their status in a [**Datasets** dialog](docs/screenshots/datasets-dialog.png), and links each one to [RINF Atlas](https://github.com/Matdata-eu/rinf-atlas).
 - **Always current**: the server checks ERA every hour and fetches only the datasets that changed, with the previous data on offer until the new one is in place; see [docs/datasets.md](docs/datasets.md).
-- **Your own map layers**: add orthophotos, satellite imagery or WMS overlays with API keys that stay on the server.
+- **Your own map layers**: add orthophotos, satellite imagery or WMS overlays with API keys that stay on the server, or serve the street map yourself from one [PMTiles](https://docs.protomaps.com/pmtiles/) file.
+- **Works offline**: an installable web app that keeps the app, the networks opened and a self-hosted map for use without a network.
 - **Your own privacy statement**, linked in the footer.
 - **Docker image** and Docker Compose file; a CLI to fetch data and print routebooks in the terminal.
 
@@ -92,7 +96,7 @@ RINF does not contain everything a professional routebook needs. The app lists t
 
 ### Background maps
 
-The app has the same map layers as RINF Atlas, none of which needs a key: **Streets** (OpenStreetMap) and the **OpenRailwayMap** overlay; a coarse **Satellite** background (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0) can be switched on in the configuration. Aerial imagery sharp enough to see tracks and platforms is not free to redistribute, so deployers add their own: Esri World Imagery with an API key, a national orthophoto service, a company WMS or WMTS. Keys are kept on the server by its tile proxy. See [docs/deployment.md#map-layers](docs/deployment.md#map-layers). The code stays MIT either way; the imagery terms are between the deployer and the provider.
+The app has the same map layers as RINF Atlas, none of which needs a key: **Streets** (OpenStreetMap) and the **OpenRailwayMap** overlay; a coarse **Satellite** background (Sentinel-2 cloudless 2016 by EOX, 10 m pixels, CC BY 4.0) can be switched on in the configuration. Aerial imagery sharp enough to see tracks and platforms is not free to redistribute, so deployers add their own: Esri World Imagery with an API key, a national orthophoto service, a company WMS or WMTS. Keys are kept on the server by its tile proxy. For production, or offline use, serve the street map yourself from a Protomaps PMTiles extract ([docs/deployment.md#a-self-hosted-street-map](docs/deployment.md#a-self-hosted-street-map)). See [docs/deployment.md#map-layers](docs/deployment.md#map-layers). The code stays MIT either way; the imagery terms are between the deployer and the provider.
 
 ## Disclaimer
 
@@ -124,7 +128,6 @@ Status: **early preview** (see the [changelog](CHANGELOG.md)).
 
 - **Speed profiles:** a plugin interface for IM speed-section data. Better use of RINF speed data where it exists.
 - **More countries:** data coverage checks and query tuning per infrastructure manager.
-- **Offline PWA:** a service worker and a cached snapshot, so the app works fully offline on a tablet, including vector base map tiles.
 - Validity-date filtering (`era:validity`), via points, and confirming the signal direction semantics with the data owners.
 
 ## Help, feedback and contributing

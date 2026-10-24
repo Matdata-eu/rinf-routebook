@@ -1,5 +1,7 @@
-import type { Routebook } from "@routebook/routebook";
+import { PARAM_STATE_LABELS, type ParamState, type Routebook } from "@routebook/routebook";
 import { KIND_LABELS, QUALITY_LABELS, gradientColor, speedColor, stripRows } from "./strip.js";
+import { routeCoverage } from "./line-strip-model.js";
+import type { TimetableEntry } from "./timetable.js";
 
 const km = (m: number) => (m / 1000).toFixed(3);
 
@@ -29,6 +31,8 @@ function symbol(kind: string, data?: Record<string, unknown>): SVGSVGElement | H
     speed: `<circle cx="10" cy="10" r="7.5" fill="#fff" stroke="#c0392b" stroke-width="2.5"/>`,
     gradient: `<path d="M2 16 L18 6 L18 16 Z" fill="var(--line-strong)"/>`,
     line: `<path d="M2 10 H18" stroke="var(--brand)" stroke-width="4"/>`,
+    change: `<path d="M3 10 H17 M12 5 L17 10 L12 15" fill="none" stroke="var(--brand)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`,
+    separation: `<path d="M2 6 H18" stroke="currentColor" stroke-width="1.6"/><path d="M7 3 V9 M13 3 V9" stroke="currentColor" stroke-width="2"/><path d="M8.5 12 L11.5 12 L9.5 15.5 L12 15.5 L8 19.5 L9.5 16.5 L7.5 16.5 Z" fill="var(--amber)"/>`,
     border: `<path d="M4 18 V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 3 H16 L13 7 L16 11 H5 Z" fill="var(--brand-strong)"/>`,
     missing: `<path d="M10 2 L19 18 H1 Z" fill="var(--amber)" stroke="var(--amber-ink)" stroke-width="1.2"/><text x="10" y="16" font-size="10" font-weight="700" text-anchor="middle" fill="var(--on-amber)">!</text>`,
   };
@@ -40,9 +44,65 @@ function symbol(kind: string, data?: Record<string, unknown>): SVGSVGElement | H
   return svg;
 }
 
+/** What a separation asks of the driver: its length, open the breaker, lower the pantograph. */
+export function separationNotes(data: Record<string, unknown> | undefined): string[] {
+  const out: string[] = [];
+  if (typeof data?.length === "number") out.push(`${data.length} m`);
+  if (data?.switchOffBreaker === true) out.push("switch off the main breaker");
+  if (data?.pantographLowered === true) out.push("lower the pantograph");
+  if (data?.changeSupplySystem === true) out.push("supply system changes");
+  return out;
+}
+
 export interface StripOptions {
   hiddenKinds: Set<string>;
   onSelect: (index: number) => void;
+  /** times at the operational points, shown on their rows */
+  times?: TimetableEntry[];
+  timeText?: (ms: number | undefined) => string;
+}
+
+/** The time on a timetable row: "a 08:15 d 08:16" at a stop, the passing time otherwise. */
+export function timeLabel(t: TimetableEntry, text: (ms: number | undefined) => string): string {
+  if (!t.stop) return text(t.pass);
+  return [t.arrival !== undefined ? `arr ${text(t.arrival)}` : "", t.departure !== undefined ? `dep ${text(t.departure)}` : ""].filter(Boolean).join(" · ");
+}
+
+const COVERAGE_STATES: ParamState[] = ["value", "notApplicable", "notYetAvailable", "notPublished", "noTrack"];
+
+/** How much of the route each section parameter is known for, and why it is not. */
+function coverageBox(rb: Routebook): HTMLDetailsElement {
+  const box = el("details", "rb-coverage");
+  const rows = routeCoverage(rb);
+  // declared: a value or "not applicable" on (nearly) all of the route; short stretches off the RINF tracks don't count against it
+  const known = rows.filter((r) => r.shares.value + r.shares.notApplicable >= 0.95).length;
+  box.append(el("summary", undefined, `Section parameters on this route: ${known} of ${rows.length} declared`));
+  const legend = el("div", "cov-legend");
+  for (const st of COVERAGE_STATES) {
+    const s = el("span");
+    s.append(el("i", `cov-sw st-${st}`), document.createTextNode(PARAM_STATE_LABELS[st]));
+    legend.append(s);
+  }
+  const table = el("div", "cov-rows");
+  for (const r of rows) {
+    const row = el("div", "cov-row");
+    row.append(el("span", "cov-label", r.label));
+    const bar = el("span", "cov-bar");
+    const parts: string[] = [];
+    for (const st of COVERAGE_STATES) {
+      const share = r.shares[st];
+      if (share < 0.0005) continue;
+      const seg = el("i", `st-${st}`);
+      seg.style.width = `${share * 100}%`;
+      bar.append(seg);
+      parts.push(`${PARAM_STATE_LABELS[st]} ${Math.round(share * 100)}%`);
+    }
+    bar.title = parts.join(", ");
+    row.append(bar, el("span", "cov-pct", `${Math.round((r.shares.value + r.shares.notApplicable) * 100)}%`));
+    table.append(row);
+  }
+  box.append(legend, table, el("p", "cov-note", "Share of the route length. Not applicable and not yet available are declared by the infrastructure manager in RINF; not published means RINF says nothing. Open the Strip view and click a section for the details."));
+  return box;
 }
 
 /** Render the routebook header, gap list and the vertical strip into `root`. */
@@ -88,6 +148,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
   }
   strip.append(cols);
 
+  const timesByIndex = new Map((opts.times ?? []).map((t) => [t.index, t]));
   for (const row of stripRows(rb)) {
     const { item } = row;
     if (opts.hiddenKinds.has(item.kind)) continue;
@@ -126,9 +187,15 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
     if (item.kind === "tunnel" && item.data?.boundary) extra.push(String(item.data.boundary));
     if (item.kind === "tunnel" && typeof item.data?.length === "number") extra.push(`${Math.round(item.data.length as number)} m`);
     if (item.kind === "op" && item.data?.reference === "area-entry") extra.push("area entry");
-    if (item.kind === "missing") extra.push(item.note ?? "no data in RINF");
+    if (item.kind === "missing") {
+      const state = item.data?.state as ParamState | undefined;
+      extra.push(state && state !== "notPublished" ? `${PARAM_STATE_LABELS[state]} (declared in RINF)` : item.note ?? "no data in RINF");
+    }
     if (item.kind === "border") extra.push("border link derived by Routebook");
+    if (item.kind === "separation") extra.push(...separationNotes(item.data));
     if (extra.length) label.append(el("small", undefined, extra.join(" · ")));
+    const t = timesByIndex.get(row.index);
+    if (t) label.append(el("span", `rb-time${t.stop ? " stop" : ""}`, timeLabel(t, opts.timeText ?? String)));
     li.append(label);
 
     const q = el("span", `c-q q q-${item.quality}`, QUALITY_LABELS[item.quality].short);
@@ -145,7 +212,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
     strip.append(li);
   }
 
-  root.append(head, legend, gaps, strip);
+  root.append(head, legend, gaps, ...(rb.stretches?.length ? [coverageBox(rb)] : []), strip);
 }
 
 export function markSelected(root: HTMLElement, index: number): void {

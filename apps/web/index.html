@@ -7,6 +7,8 @@
     <title>RouteBook</title>
     <link rel="icon" type="image/svg+xml" href="./src/favicon.svg" />
     <meta name="theme-color" content="#0563bb" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./pwa/icon-192.png" />
     <meta name="color-scheme" content="light dark" />
     <script>
       // the theme before the first paint (src/theme.ts takes over): the saved choice, else the system setting
@@ -49,6 +51,7 @@
         <div class="view-tabs" role="tablist" aria-label="View">
           <button id="tab-map" type="button" role="tab" aria-selected="true" aria-controls="map">Map</button>
           <button id="tab-schematic" type="button" role="tab" aria-selected="false" aria-controls="schematic">Schematic</button>
+          <button id="tab-strip" type="button" role="tab" aria-selected="false" aria-controls="strip" title="The route as a line strip: speed, gradient, energy, train protection and radio, with times">Strip</button>
           <button id="tab-drive" type="button" role="tab" aria-selected="false" aria-controls="map" title="Follow a train along the route, satnav style">Drive</button>
         </div>
         <div id="map" class="map" role="tabpanel" aria-label="Map"></div>
@@ -67,6 +70,7 @@
           </div>
           <div id="sch-scroll" class="sch-scroll"></div>
         </section>
+        <section id="strip" class="line-strip" role="tabpanel" aria-label="Line strip" hidden></section>
       </div>
       <aside class="panel">
         <details class="filters-box">

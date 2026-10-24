@@ -18,6 +18,8 @@ services:
     volumes:
       - routebook-data:/data
       - ./config:/config:ro
+      # a self-hosted street map (PMTiles file, fonts), see docs/deployment.md
+      # - ./basemap:/data/basemap:ro
     restart: unless-stopped
 
 volumes:
