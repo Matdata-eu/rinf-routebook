@@ -44,6 +44,9 @@ importers:
       '@fontsource/barlow':
         specifier: ^5.3.0
         version: 5.3.0
+      '@protomaps/basemaps':
+        specifier: ^5.7.2
+        version: 5.7.2
       '@routebook/rinf-client':
         specifier: workspace:*
         version: link:../../packages/rinf-client
@@ -62,6 +65,9 @@ importers:
       maplibre-gl:
         specifier: ^5.24.0
         version: 5.24.0
+      pmtiles:
+        specifier: ^4.5.0
+        version: 4.5.0
     devDependencies:
       vite:
         specifier: ^6.4.4
@@ -471,6 +477,10 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@protomaps/basemaps@5.7.2':
+    resolution: {integrity: sha512-K1Yk6bWdULulYg+R2QRVXx4NzJZan5YQhpejEG0c1/sXruJrfPIPZuakpf3jwAgVmjIRVQwAv+yRafDeN0aaUQ==}
+    hasBin: true
+
   '@rollup/rollup-android-arm-eabi@4.64.10':
     resolution: {integrity: sha512-oJ9ZfVIZjSjts0ZIYA48+5T0vurE5fQfX/Liad2U52Y6EN99x/OCdjGGuKMDP6jSk2i2lY6jwwA3X0drEc4PBg==}
     cpu: [arm]
@@ -837,6 +847,9 @@ packages:
       picomatch:
         optional: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -899,6 +912,9 @@ packages:
     resolution: {integrity: sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg==}
     engines: {node: '>=20'}
     hasBin: true
+
+  pmtiles@4.5.0:
+    resolution: {integrity: sha512-CBeD4SoUluFziGdy/8k7FOjQxQy486n+929W/tWophauvMICpkZ26vGBWhDt/6b1FZQWNaf4jFdT/5+q0Wii5w==}
 
   postcss@8.5.30:
     resolution: {integrity: sha512-zkd+e9S1AQHhmaBKye9zlFHWjOwVgqXl1q3ECYy8561K7qxR2cREf/STLskulBFd78k6AOFeA+ff1TtEzk9bAA==}
@@ -1297,6 +1313,8 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
+  '@protomaps/basemaps@5.7.2': {}
+
   '@rollup/rollup-android-arm-eabi@4.64.10':
     optional: true
 
@@ -1583,6 +1601,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
+  fflate@0.8.3: {}
+
   fsevents@2.3.3:
     optional: true
 
@@ -1643,6 +1663,10 @@ snapshots:
   picomatch@4.0.7: {}
 
   playwright-core@1.64.0: {}
+
+  pmtiles@4.5.0:
+    dependencies:
+      fflate: 0.8.3
 
   postcss@8.5.30:
     dependencies:

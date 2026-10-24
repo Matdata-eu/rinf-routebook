@@ -13,12 +13,14 @@
   },
   "dependencies": {
     "@fontsource/barlow": "^5.3.0",
+    "@protomaps/basemaps": "^5.7.2",
     "@routebook/rinf-client": "workspace:*",
-    "maplibre-gl": "^5.24.0",
-    "@routebook/routing": "workspace:*",
     "@routebook/routebook": "workspace:*",
+    "@routebook/routing": "workspace:*",
     "@routebook/schematic": "workspace:*",
-    "highs": "^1.15.3"
+    "highs": "^1.15.3",
+    "maplibre-gl": "^5.24.0",
+    "pmtiles": "^4.5.0"
   },
   "devDependencies": {
     "vite": "^6.4.4"

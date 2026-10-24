@@ -5,6 +5,7 @@
 //
 // Usage: node scripts/serve.mjs [dir=apps/web/dist] [port=4173]
 // Environment: PORT, HOST (default 127.0.0.1; 0.0.0.0 in Docker), ROUTEBOOK_DATA_DIR (default ./data),
+// ROUTEBOOK_BASEMAP_DIR (default <data>/basemap: a self-hosted basemap, served at basemap/),
 // ROUTEBOOK_SYNC_MINUTES (> 0 runs `routebook sync` next to the server, keeping the data current),
 // and the configuration variables in scripts/runtime-config.mjs.
 import { createServer } from "node:http";
@@ -27,6 +28,9 @@ const TYPES = {
   ".ico": "image/x-icon",
   ".wasm": "application/wasm",
   ".map": "application/json",
+  ".webmanifest": "application/manifest+json",
+  ".pmtiles": "application/vnd.pmtiles",
+  ".pbf": "application/x-protobuf",
 };
 const COMPRESS = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".map", ".wasm"]);
 const SECURITY = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin" };
@@ -109,6 +113,46 @@ function json(res, body, status = 200) {
   res.writeHead(status, { "Content-Type": TYPES[".json"], "Cache-Control": "no-cache", ...SECURITY }).end(JSON.stringify(body));
 }
 
+/**
+ * A file of the self-hosted basemap (`<basemap dir>/<path>`): a PMTiles file, read by the browser
+ * with range requests, and its fonts. Cacheable for a day; a new extract should get a new name.
+ */
+function serveBasemapFile(req, res, dir, rel) {
+  const path = findFile([dir], `/${rel}`);
+  if (!path) return void res.writeHead(404, { "Content-Type": "text/plain", ...SECURITY }).end("Not found");
+  const stat = statSync(path);
+  const etag = etagOf(stat);
+  const headers = { "Content-Type": TYPES[extname(path)] ?? "application/octet-stream", "Cache-Control": "public, max-age=86400", ETag: etag, "Accept-Ranges": "bytes", ...SECURITY };
+  const range = byteRange(req.headers.range, stat.size);
+  if (range === null) return void res.writeHead(416, { ...headers, "Content-Range": `bytes */${stat.size}` }).end();
+  if (!range && req.headers["if-none-match"]?.split(",").some((t) => t.trim() === etag)) return void res.writeHead(304, headers).end();
+  if (range) {
+    res.writeHead(206, { ...headers, "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`, "Content-Length": range.end - range.start + 1 });
+    if (req.method === "HEAD") return void res.end();
+    return void createReadStream(path, range).pipe(res);
+  }
+  res.writeHead(200, { ...headers, "Content-Length": stat.size });
+  if (req.method === "HEAD") return void res.end();
+  createReadStream(path).pipe(res);
+}
+
+/** One `Range: bytes=a-b` (or `a-`, `-n`) of a file of `size` bytes: undefined for none, null when it cannot be satisfied. */
+export function byteRange(header, size) {
+  if (!header) return undefined;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === "" && m[2] === "")) return undefined; // several ranges or junk: send the whole file
+  let start, end;
+  if (m[1] === "") {
+    start = Math.max(0, size - Number(m[2]));
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === "" ? size - 1 : Math.min(size - 1, Number(m[2]));
+  }
+  if (start > end || start >= size) return null;
+  return { start, end };
+}
+
 /** Resolve a URL path inside one of the roots; undefined when it is outside them or missing. */
 function findFile(roots, pathname) {
   for (const root of roots) {
@@ -163,7 +207,7 @@ async function proxyTile(req, res, layer, t) {
  * @param {string} dir built web app (apps/web/dist)
  * @param {number} [port]
  * @param {string} [host]
- * @param {{ dataDir?: string, config?: object }} [opts] data folder with web/<dataset> bundles; configuration (default: loadConfig())
+ * @param {{ dataDir?: string, basemapDir?: string, config?: object }} [opts] data folder with web/<dataset> bundles; self-hosted basemap folder; configuration (default: loadConfig())
  */
 export function startServer(dir, port = 4173, host = "127.0.0.1", opts = {}) {
   const handler = createHandler(dir, opts);
@@ -245,6 +289,7 @@ function precompressed(path, stat, acceptEncoding) {
 export function createHandler(dir, opts = {}) {
   const root = resolve(dir);
   const dataWeb = resolve(opts.dataDir ?? process.env.ROUTEBOOK_DATA_DIR ?? "data", "web");
+  const basemapDir = resolve(opts.basemapDir ?? process.env.ROUTEBOOK_BASEMAP_DIR ?? join(opts.dataDir ?? process.env.ROUTEBOOK_DATA_DIR ?? "data", "basemap"));
   const roots = [dataWeb, root];
   const config = opts.config ?? loadConfig();
   const browserConfig = publicConfig(config);
@@ -273,6 +318,8 @@ export function createHandler(dir, opts = {}) {
       res.writeHead(404, SECURITY).end();
       return;
     }
+    const bm = /\/basemap\/(.+)$/.exec(p);
+    if (bm) return serveBasemapFile(req, res, basemapDir, bm[1]);
     if (next) return next();
 
     const path = findFile(roots, p);

@@ -6,7 +6,7 @@
 //   1. the file in ROUTEBOOK_CONFIG_FILE (default: config.json in the working directory, if present)
 //   2. ROUTEBOOK_CONFIG: the same JSON in an environment variable (its keys replace the file's)
 //   3. shorthands: ROUTEBOOK_TITLE, ROUTEBOOK_DEFAULT_DATASET, ROUTEBOOK_DEFAULT_BASEMAP, ESRI_API_KEY,
-//      ROUTEBOOK_PRIVACY_URL, ROUTEBOOK_PRIVACY_FILE
+//      ROUTEBOOK_BASEMAP_PMTILES, ROUTEBOOK_PRIVACY_URL, ROUTEBOOK_PRIVACY_FILE
 //
 // Strings may contain ${VAR} or ${VAR:-default}: they are replaced by environment variables,
 // so keys can stay out of the config file. A layer with "proxy": true is fetched by the server,
@@ -45,6 +45,14 @@ export function esriLayer(key) {
 }
 
 /**
+ * A self-hosted vector basemap: a Protomaps PMTiles file in the basemap folder (served at basemap/).
+ * It replaces the OpenStreetMap tiles as the street map, so no third-party tile service is used.
+ */
+export function pmtilesLayer(file) {
+  return { id: "map", label: "Streets", type: "pmtiles", url: `basemap/${file.split("/").map(encodeURIComponent).join("/")}` };
+}
+
+/**
  * The full (server-side) configuration, with secrets.
  * @param {{ env?: NodeJS.ProcessEnv, cwd?: string, log?: (msg: string) => void }} [opts]
  */
@@ -80,6 +88,7 @@ export function loadConfig({ env = process.env, cwd = process.cwd(), log = conso
   if (env.ROUTEBOOK_DEFAULT_DATASET) config.defaultDataset = env.ROUTEBOOK_DEFAULT_DATASET;
   if (env.ROUTEBOOK_DEFAULT_BASEMAP) config.defaultBasemap = env.ROUTEBOOK_DEFAULT_BASEMAP;
   const basemaps = Array.isArray(config.basemaps) ? [...config.basemaps] : [];
+  if (env.ROUTEBOOK_BASEMAP_PMTILES?.trim() && !basemaps.some((b) => b?.type === "pmtiles")) basemaps.unshift(pmtilesLayer(env.ROUTEBOOK_BASEMAP_PMTILES.trim()));
   if (env.ESRI_API_KEY?.trim() && !basemaps.some((b) => b?.id === "aerial")) basemaps.push(esriLayer(env.ESRI_API_KEY.trim()));
   config.basemaps = basemaps;
   if (!Array.isArray(config.overlays)) config.overlays = [];
@@ -87,8 +96,9 @@ export function loadConfig({ env = process.env, cwd = process.cwd(), log = conso
   for (const kind of ["basemaps", "overlays"]) {
     const seen = new Set();
     config[kind] = config[kind].filter((l) => {
-      const ok = l && typeof l.id === "string" && /^[A-Za-z0-9_-]+$/.test(l.id) && Array.isArray(l.tiles) && l.tiles.some((t) => typeof t === "string" && t);
-      if (!ok) log(`Routebook configuration: skipping ${kind} entry ${JSON.stringify(l?.id ?? l)} (needs an id of letters, digits, - or _, and tiles).`);
+      const pmtiles = kind === "basemaps" && l?.type === "pmtiles";
+      const ok = l && typeof l.id === "string" && /^[A-Za-z0-9_-]+$/.test(l.id) && (pmtiles ? typeof l.url === "string" && l.url.trim() !== "" : Array.isArray(l.tiles) && l.tiles.some((t) => typeof t === "string" && t));
+      if (!ok) log(`Routebook configuration: skipping ${kind} entry ${JSON.stringify(l?.id ?? l)} (needs an id of letters, digits, - or _, and tiles, or for a basemap type "pmtiles" and a url).`);
       else if (seen.has(l.id)) log(`Routebook configuration: duplicate ${kind} id "${l.id}", skipped.`);
       const keep = ok && !seen.has(l.id);
       if (ok) seen.add(l.id);

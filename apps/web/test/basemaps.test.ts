@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absoluteTemplate, basemaps, headerTransform, loadRuntimeConfig, overlays, pickBasemap } from "../src/basemaps.js";
+import { PROTOMAPS_GLYPHS, absoluteTemplate, basemaps, headerTransform, isBasemapLayer, labelFonts, loadRuntimeConfig, overlays, pickBasemap, vectorLayers } from "../src/basemaps.js";
 
 const BASE = "https://rail.example/routebook/?dataset=nor";
 
@@ -42,6 +42,30 @@ describe("basemaps", () => {
     expect(list[0]!.source.attribution).toContain("OpenRailwayMap");
     expect(list[1]).toMatchObject({ paint: { "raster-opacity": 0.6 }, description: "Catenary" });
     expect(overlays({ builtinOverlays: false }).map((o) => o.id)).toEqual([]);
+  });
+
+  it("turns a PMTiles file into a self-hosted vector street map, light or dark", () => {
+    const config = { basemaps: [{ id: "map", type: "pmtiles" as const, url: "basemap/europe.pmtiles", lang: "nb" }] };
+    const [b] = basemaps(config, BASE);
+    expect(b!.id).toBe("map");
+    expect(b!.source).toMatchObject({ type: "vector", url: "pmtiles://https://rail.example/routebook/basemap/europe.pmtiles" });
+    expect(b!.vector).toEqual({ lang: "nb" });
+    const light = vectorLayers(b!, "light");
+    expect(light.length).toBeGreaterThan(20);
+    expect(light.every((l) => isBasemapLayer(l.id))).toBe(true);
+    expect(light.some((l) => l.id === "basemap:pois")).toBe(false);
+    const bg = (layers: ReturnType<typeof vectorLayers>) => JSON.stringify(layers.find((l) => l.id === "basemap:background"));
+    expect(bg(vectorLayers(b!, "dark"))).not.toBe(bg(light));
+    // never an overlay, and a pmtiles entry without a file is skipped
+    expect(overlays({ builtinOverlays: false, overlays: config.basemaps }).length).toBe(0);
+    expect(basemaps({ basemaps: [{ id: "x", type: "pmtiles" }] }).map((x) => x.id)).toEqual(["map"]);
+  });
+
+  it("labels with the fonts the basemaps need", () => {
+    expect(labelFonts({}, basemaps({})).font).toBe("Open Sans Semibold");
+    const vector = basemaps({ basemaps: [{ id: "v", type: "pmtiles", url: "basemap/a.pmtiles" }] });
+    expect(labelFonts({}, vector)).toEqual({ glyphs: PROTOMAPS_GLYPHS, font: "Noto Sans Medium" });
+    expect(labelFonts({ glyphs: "basemap/fonts/{fontstack}/{range}.pbf" }, vector)).toEqual({ glyphs: "basemap/fonts/{fontstack}/{range}.pbf", font: "Noto Sans Medium" });
   });
 
   it("picks by id, then the configured default, and falls back sensibly", () => {
