@@ -864,7 +864,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
 
 function buildFilters(): void {
   const box = $("filters");
-  for (const kind of ["line", "speed", "gradient", "op", "tunnel", "signal", "switch", "levelCrossing", "kmPost"]) {
+  for (const kind of ["line", "change", "speed", "gradient", "op", "tunnel", "separation", "signal", "switch", "levelCrossing", "kmPost"]) {
     const label = document.createElement("label");
     const cb = document.createElement("input");
     cb.type = "checkbox";

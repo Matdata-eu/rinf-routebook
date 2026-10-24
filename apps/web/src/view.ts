@@ -29,6 +29,8 @@ function symbol(kind: string, data?: Record<string, unknown>): SVGSVGElement | H
     speed: `<circle cx="10" cy="10" r="7.5" fill="#fff" stroke="#c0392b" stroke-width="2.5"/>`,
     gradient: `<path d="M2 16 L18 6 L18 16 Z" fill="var(--line-strong)"/>`,
     line: `<path d="M2 10 H18" stroke="var(--brand)" stroke-width="4"/>`,
+    change: `<path d="M3 10 H17 M12 5 L17 10 L12 15" fill="none" stroke="var(--brand)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`,
+    separation: `<path d="M2 6 H18" stroke="currentColor" stroke-width="1.6"/><path d="M7 3 V9 M13 3 V9" stroke="currentColor" stroke-width="2"/><path d="M8.5 12 L11.5 12 L9.5 15.5 L12 15.5 L8 19.5 L9.5 16.5 L7.5 16.5 Z" fill="var(--amber)"/>`,
     border: `<path d="M4 18 V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 3 H16 L13 7 L16 11 H5 Z" fill="var(--brand-strong)"/>`,
     missing: `<path d="M10 2 L19 18 H1 Z" fill="var(--amber)" stroke="var(--amber-ink)" stroke-width="1.2"/><text x="10" y="16" font-size="10" font-weight="700" text-anchor="middle" fill="var(--on-amber)">!</text>`,
   };
@@ -38,6 +40,16 @@ function symbol(kind: string, data?: Record<string, unknown>): SVGSVGElement | H
   svg.innerHTML = paths[kind] ?? `<circle cx="10" cy="10" r="4" fill="#666"/>`;
   if (kind === "signal") svg.style.setProperty("--sig", signalColors[String(data?.signalType)] ?? "#c0392b");
   return svg;
+}
+
+/** What a separation asks of the driver: its length, open the breaker, lower the pantograph. */
+export function separationNotes(data: Record<string, unknown> | undefined): string[] {
+  const out: string[] = [];
+  if (typeof data?.length === "number") out.push(`${data.length} m`);
+  if (data?.switchOffBreaker === true) out.push("switch off the main breaker");
+  if (data?.pantographLowered === true) out.push("lower the pantograph");
+  if (data?.changeSupplySystem === true) out.push("supply system changes");
+  return out;
 }
 
 export interface StripOptions {
@@ -128,6 +140,7 @@ export function renderRoutebook(root: HTMLElement, rb: Routebook, opts: StripOpt
     if (item.kind === "op" && item.data?.reference === "area-entry") extra.push("area entry");
     if (item.kind === "missing") extra.push(item.note ?? "no data in RINF");
     if (item.kind === "border") extra.push("border link derived by Routebook");
+    if (item.kind === "separation") extra.push(...separationNotes(item.data));
     if (extra.length) label.append(el("small", undefined, extra.join(" · ")));
     li.append(label);
 
