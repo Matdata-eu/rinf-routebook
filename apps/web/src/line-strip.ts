@@ -393,8 +393,10 @@ export class LineStrip {
     const rb = this.rb;
     if (!rb || this.root.hidden) return;
     const h = this.scroll.clientHeight || 600;
-    const top = Math.max(0, this.scroll.scrollTop - h);
-    const bottom = Math.min(this.scale.height, this.scroll.scrollTop + 2 * h);
+    // the scroll position can still be the one of a taller layout until the browser clamps it
+    const scrollTop = Math.min(this.scroll.scrollTop, Math.max(0, this.scale.height - h));
+    const top = Math.max(0, scrollTop - h);
+    const bottom = Math.min(this.scale.height, scrollTop + 2 * h);
     this.svg.setAttribute("height", String(bottom - top));
     this.svg.style.top = `${top}px`;
     this.svg.setAttribute("viewBox", `0 ${top} ${this.svg.getAttribute("width")} ${bottom - top}`);

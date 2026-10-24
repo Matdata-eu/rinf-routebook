@@ -74,8 +74,9 @@ const COVERAGE_STATES: ParamState[] = ["value", "notApplicable", "notYetAvailabl
 function coverageBox(rb: Routebook): HTMLDetailsElement {
   const box = el("details", "rb-coverage");
   const rows = routeCoverage(rb);
-  const known = rows.filter((r) => r.shares.value + r.shares.notApplicable > 0.995).length;
-  box.append(el("summary", undefined, `Section parameters on this route: ${known} of ${rows.length} fully declared`));
+  // declared: a value or "not applicable" on (nearly) all of the route; short stretches off the RINF tracks don't count against it
+  const known = rows.filter((r) => r.shares.value + r.shares.notApplicable >= 0.95).length;
+  box.append(el("summary", undefined, `Section parameters on this route: ${known} of ${rows.length} declared`));
   const legend = el("div", "cov-legend");
   for (const st of COVERAGE_STATES) {
     const s = el("span");
