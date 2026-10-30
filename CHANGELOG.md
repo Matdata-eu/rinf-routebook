@@ -6,6 +6,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- **Plugins run**: config.json `plugins` names ES modules (served by the deployment from `<data>/plugins/`, `ROUTEBOOK_PLUGINS_DIR`) that the web app loads at start-up; their item providers extend every routebook, their overlays are drawn on the map and `costModel` picks one of their cost models. A plugin that fails is skipped with a note, and the core routebook is still shown. The CLI takes `route --plugin <module>` and `--cost <plugin model>`. New guide `docs/plugins.md` and an example, `examples/plugins/km-markers.js`.
+- Server: a Content-Security-Policy on HTML pages (`contentSecurityPolicy` replaces it or switches it off); the tile proxy refuses cross-site requests, limits each client (`ROUTEBOOK_TILE_RATE`, default 1200 tiles a minute) and keeps a shared tile cache (`ROUTEBOOK_TILE_CACHE_MB`, default 64); `ROUTEBOOK_TRUST_PROXY` behind a reverse proxy. The privacy statement takes `html`.
+- Routing follows net relations that are navigable in one direction only (RINF navigability AB and BA), which were dropped before. `FETCH_VERSION` 4 makes the sync fetch every dataset again to pick them up.
+- Keyboard and screen readers: the view tabs follow the tabs pattern (arrow keys, Home, End) and the From/To suggestions announce the highlighted option. Error messages can be dismissed.
+
 - **Section parameters** per track from RINF: contact line and energy supply system, maximum train current, raised pantographs, TSI pantograph head, class B and other train protection, ETCS level and baseline, GSM-R and other radio, gauge, gauging profile and line category, with the infrastructure manager's *not applicable* and *not yet available* declarations (`era:notApplicable`, `era:notYetAvailable`). The routebook gets an item where energy, class B, ETCS, GSM-R or the gauge changes (quality derived) and the phase and system separations with their length and what the driver must do. The bundle format changes, so `FETCH_VERSION` 3 makes the sync fetch every dataset again.
 - **Strip** view: the route as vertical bands like a paper route book (km, gradient, speed, energy, class B, ETCS, GSM-R, tunnels and separations, the operational points, signals and changes, times), at 2, 5, 10, 30 or 60 km per screen, ahead up or down, with a **Run** button for a train the strip follows. A click opens the **section card**: every parameter in force there with its RINF state. Hatched is not published, dotted not yet available, grey not applicable.
 - **Section parameters on this route** in the routebook panel: per parameter, the share of the route with a value, declared not applicable or not yet available, or not published.
@@ -41,6 +46,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- **Privacy statement:** `text` is now always plain text (escaped). HTML that was given as `text` must move to `html` or an `.html` file.
+- The sync no longer writes full snapshots (`<data>/snapshots/`, as large again as the bundles) unless `--keep-snapshots` or `ROUTEBOOK_KEEP_SNAPSHOTS` asks for them; only the CLI's `route`, `stats` and `bundle` read them. Existing snapshot folders are left alone and can be deleted.
+- The sync and `fetch-all` rebuild the network index once at the end of a pass (and every 10 minutes during a long one) instead of after every dataset.
+- The offline app keeps the bundles of the eight datasets used most recently and drops the others.
+- The Docker image runs on Node.js 24 (LTS) instead of 25; Dependabot leaves the Node.js major to us.
+
 - The street map is the default background, styled as in RINF Atlas (also in the dark theme), and the public instance opens on it; its Esri aerial view is one click away. The coarse Sentinel-2 background is no longer offered unless `builtinBasemaps` names it.
 - The From/To fields stay on one row: the status line sits under them, so a message no longer pushes **Clear** to a line of its own.
 - The sync fetches every dataset once more after this release (`outdated`), to pick up the geometry and the counts below.
@@ -73,6 +84,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - CLI: `routebook bundle` / `fetch` write `switches.json` (classified on full-resolution geometry); `pnpm bundle:nor`.
 
 ### Fixed
+
+- A request with malformed percent-encoding (`GET /%`) crashed the whole server; it now gets 400 or 404, and errors while reading a file no longer stop the process.
+- Safari stopped updating the URL (and threw) while the Strip view's train was running: the URL is now written at most twice a second.
+- Search finds names with ø, æ, ß, ł and similar letters typed without them (Bodo finds Bodø).
+- The infrastructure manager's name in the map attribution is escaped.
 
 - Belgium's operational points and sections of line were missing from the map: Infrabel publishes their geometry on the net reference, which Routebook did not read. Both places are read now, as in RINF Atlas, and WKT is normalised (CRS IRI, lat/lon order, plus signs, exponents, Z values).
 

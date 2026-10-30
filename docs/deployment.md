@@ -218,10 +218,11 @@ When you run Routebook for others, you are responsible for its privacy statement
 { "privacy": { "url": "https://example.org/privacy" } }
 { "privacy": { "file": "privacy.html" } }
 { "privacy": { "text": "Routebook does not use cookies. ...", "label": "Privacy notice" } }
+{ "privacy": { "html": "<h1>Privacy</h1><p>...</p>" } }
 ```
 
 - `url` links to a page you host elsewhere.
-- `file` (relative to the configuration file, so `config/privacy.html` next to `config/config.json`) and `text` are served by Routebook as `privacy.html`. HTML is used as it is (a fragment gets a simple page around it, a full document is served unchanged); plain text becomes paragraphs.
+- `file` (relative to the configuration file, so `config/privacy.html` next to `config/config.json`), `text` and `html` are served by Routebook as `privacy.html`. An `.html` file and `html` are used as they are (a fragment gets a simple page around it, a full document is served unchanged); `text` and other files are plain text, escaped and turned into paragraphs.
 - `label` changes the link text (default `Privacy`).
 
 The shortcuts `ROUTEBOOK_PRIVACY_URL` and `ROUTEBOOK_PRIVACY_FILE` do the same from the environment.
@@ -248,10 +249,15 @@ Environment variables of the server and the container:
 | `ESRI_API_KEY` | none | Adds the proxied Esri World Imagery background. |
 | `ROUTEBOOK_BASEMAP_PMTILES` | none | A PMTiles file in the basemap folder that replaces the OpenStreetMap tiles as **Streets**, see [A self-hosted street map](#a-self-hosted-street-map). |
 | `ROUTEBOOK_BASEMAP_DIR` | `<data folder>/basemap` | Folder served at `basemap/`: PMTiles files and fonts. |
+| `ROUTEBOOK_PLUGINS_DIR` | `<data folder>/plugins` | Folder served at `plugins/`: plugin modules for `plugins` in the configuration, see [plugins.md](plugins.md). |
+| `ROUTEBOOK_TILE_RATE` | `1200` | Proxied tiles per minute per client (a refilling bucket; past it the proxy answers 429); `0` for no limit. Protects the quota of your layer keys. |
+| `ROUTEBOOK_TILE_CACHE_MB` | `64` | Memory for proxied tiles shared by all users (tiles the provider marks cacheable, for as long as it says); `0` for none. |
+| `ROUTEBOOK_TRUST_PROXY` | none | `1` behind a reverse proxy: the client of a request is read from `X-Forwarded-For` (for the tile rate limit). Leave it unset when the server is reachable directly, or clients could pick their own address. |
+| `ROUTEBOOK_KEEP_SNAPSHOTS` | none | `1`: the sync also writes the full snapshot of each dataset (`snapshots/<id>`, as large again as the bundles), for the CLI's `route`, `stats` and `bundle`. |
 | `ROUTEBOOK_PRIVACY_URL`, `ROUTEBOOK_PRIVACY_FILE` | none | Privacy statement link or file, see [above](#privacy-statement). |
 | `ROUTEBOOK_CONFIG_FILE` | `/config/config.json` in the image, `./config.json` otherwise | The configuration file. |
 | `ROUTEBOOK_CONFIG` | none | The configuration as JSON in one variable; its keys replace those of the file. |
-| `ROUTEBOOK_DATA_DIR` | `/data` in the image, `./data` otherwise | RINF snapshots (`snapshots/<id>`) and web bundles (`web/<id>`). |
+| `ROUTEBOOK_DATA_DIR` | `/data` in the image, `./data` otherwise | Web bundles (`web/<id>`) and, from `routebook fetch` or with `ROUTEBOOK_KEEP_SNAPSHOTS`, RINF snapshots (`snapshots/<id>`). |
 | `ROUTEBOOK_SPARQL_ENDPOINT` | `https://graph.data.era.europa.eu/repositories/rinf-plus` | SPARQL endpoint for `fetch` and `datasets`. |
 | `ROUTEBOOK_DATASETS_API` | the explorer of the endpoint (`https://rinf.data.era.europa.eu/api/v1`) | ERA dataset explorer API, for the publication date and id of each dataset; `none` skips it. |
 | `PORT`, `HOST` | `8080`, `0.0.0.0` in the image | Where the server listens. |
@@ -286,6 +292,12 @@ location /routebook/ {
 ```
 
 Responses for hashed assets carry long cache headers, the rest `no-cache` with an `ETag`, so browsers revalidate and only download a bundle again after a new fetch. The data bundles are a few MB per country and are served precompressed (brotli or gzip, whichever the browser accepts), so the proxy need not compress them again; pass the `Accept-Encoding` header through.
+
+Set `ROUTEBOOK_TRUST_PROXY=1` so that the tile rate limit counts each user rather than the proxy, and have the proxy set `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
+
+### Content-Security-Policy
+
+HTML pages are served with a Content-Security-Policy: scripts only from the app's own origin (plus the hashes of the build's inline scripts, and WebAssembly for the schematic solver), no framing, no plugins. Map tiles and styles may come from any `https:` or `http:` host, so your own layers work without changes. If your reverse proxy sets its own policy, or you need a different one, set `contentSecurityPolicy` in `config.json` to the policy text, or to `false` to send none.
 
 ## Static hosting
 
