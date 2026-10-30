@@ -66,11 +66,12 @@ pnpm dev:web                                # http://127.0.0.1:5173
 | `pnpm route "Oslo S" Drammen --limit 40` | Prints a routebook in the terminal (`--dataset`, `--json`, `--kinds signal,switch`, `--area`, `--cost length`) |
 | `pnpm test` / `pnpm typecheck` | Vitest suite / TypeScript checks |
 | `pnpm screenshots` | Headless screenshots into `docs/screenshots` (uses your installed Chrome, `--channel msedge` for Edge) |
+| `pnpm smoke` | Browser smoke test of the built app: a small synthetic dataset and the example plugin, every view, no page errors or Content-Security-Policy violations (uses your installed Chrome, or `CHROME_PATH`; CI runs it) |
 
 ## How routing works
 
 1. **Snapshot:** `routebook fetch` runs a fixed set of SPARQL queries ([packages/rinf-client/queries](packages/rinf-client/queries)) against the dataset's named graphs. The results are stored as JSON: a full snapshot for the CLI, plus a compact web bundle for the browser.
-2. **Graph:** each micro `era:LinearElement` is an edge with its length. `era:NetRelation`s with navigability `Both` connect element ends. Relations with navigability `None` (switch leg to leg) are skipped, so a route never reverses through a switch.
+2. **Graph:** each micro `era:LinearElement` is an edge with its length. `era:NetRelation`s with navigability `Both` connect element ends (`AB` and `BA` one way only). Relations with navigability `None` (switch leg to leg) are skipped, so a route never reverses through a switch.
 3. **Endpoints:** an OP is placed on the topology through its `NetPointReference` (centre point). If it has none, the `NetAreaReference` (station area) is used.
 4. **Shortest path:** Dijkstra with a pluggable cost model. The default prefers running tracks over sidings.
 5. **Routebook:** features referenced on the traversed elements are placed by distance along the route. Signals are filtered by direction of travel. Tunnels are placed from their area coverage. Speed and gradient come from the running track. Each item is flagged as `rinf`, `derived`, `approximate` or `missing`.
@@ -105,7 +106,7 @@ Routebook is a demonstration of what public RINF data can do. It is not meant fo
 ## Scope
 
 - **Open core (this repository, MIT):** the RINF client, routing, the routebook model, the plugin interface, the web app, the CLI and the Docker image. It only uses public RINF data, and it is useful on its own.
-- **Extensions (separate repositories):** for example, detailed speed profiles from an infrastructure manager, timetable-aware routing, branded PDF export, or fleet features. They plug into [`packages/core-extensions`](packages/core-extensions/src/index.ts) and never require changes to, or a fork of, the core. See [docs/architecture.md](docs/architecture.md#core-extensions-the-open-core-boundary).
+- **Extensions (separate repositories):** for example, detailed speed profiles from an infrastructure manager, timetable-aware routing, branded PDF export, or fleet features. They plug into [`packages/core-extensions`](packages/core-extensions/src/index.ts) and never require changes to, or a fork of, the core. A deployment loads them from config.json (`plugins`); see [docs/plugins.md](docs/plugins.md).
 
 Status: **early preview** (see the [changelog](CHANGELOG.md)).
 

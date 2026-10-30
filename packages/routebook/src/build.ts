@@ -437,10 +437,17 @@ export interface NetworkLabels {
  */
 export function addBorderItems(rb: Routebook, networks: NetworkLabels): Routebook {
   const steps = rb.route.steps;
+  // the last step starting at or before `distance` (steps are in route order): a binary search,
+  // as a long route across networks has thousands of steps and items
   const datasetAt = (distance: number): string | undefined => {
-    let step = steps[0];
-    for (const s of steps) if (s.startDistance <= distance + 1e-6) step = s;
-    return step ? networks.datasetOf(step.ne) : undefined;
+    if (!steps.length) return undefined;
+    let lo = 0, hi = steps.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (steps[mid]!.startDistance <= distance + 1e-6) lo = mid;
+      else hi = mid - 1;
+    }
+    return networks.datasetOf(steps[lo]!.ne);
   };
   const items: RoutebookItem[] = [];
   const borderUopids = new Map<string, number>();

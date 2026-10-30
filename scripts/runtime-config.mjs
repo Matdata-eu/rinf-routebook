@@ -112,8 +112,9 @@ const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&l
 
 /**
  * The privacy statement: a link to the deployer's own page ({ url }), or their text, inline
- * ({ text }) or from a file ({ file }, relative to the configuration file), served as privacy.html.
- * HTML is used as it is; plain text becomes paragraphs. A plain string is a URL or a text.
+ * ({ text } plain text, { html } HTML) or from a file ({ file }, relative to the configuration file;
+ * .html files are HTML), served as privacy.html. HTML is used as it is; plain text is escaped and
+ * becomes paragraphs. A plain string is a URL or a text.
  * Returns { label, url } or { label, html }, or undefined when there is none.
  */
 export function loadPrivacy(privacy, baseDir = process.cwd(), log = console.warn) {
@@ -122,7 +123,7 @@ export function loadPrivacy(privacy, baseDir = process.cwd(), log = console.warn
   if (typeof privacy !== "object") return undefined;
   const label = typeof privacy.label === "string" && privacy.label.trim() ? privacy.label.trim() : "Privacy";
   if (typeof privacy.url === "string" && privacy.url.trim()) return { label, url: privacy.url.trim() };
-  let text = typeof privacy.text === "string" ? privacy.text : undefined;
+  let text = typeof privacy.text === "string" ? privacy.text : typeof privacy.html === "string" ? privacy.html : undefined;
   let isHtml = false;
   if (typeof privacy.file === "string" && privacy.file.trim()) {
     const path = resolve(baseDir, privacy.file.trim());
@@ -135,7 +136,12 @@ export function loadPrivacy(privacy, baseDir = process.cwd(), log = console.warn
     }
   }
   if (!text?.trim()) return undefined;
-  isHtml ||= /<[a-z][\s\S]*>/i.test(text);
+  // HTML only from an .html file or a text that says so ({ html: "..." } is the same as a file);
+  // a plain text is always escaped, so "a < b" or "<3" in it stays text
+  if (typeof privacy.html === "string" && privacy.html.trim()) {
+    text = privacy.html;
+    isHtml = true;
+  }
   const html = isHtml
     ? text
     : text

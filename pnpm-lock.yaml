@@ -47,6 +47,9 @@ importers:
       '@protomaps/basemaps':
         specifier: ^5.7.2
         version: 5.7.2
+      '@routebook/core-extensions':
+        specifier: workspace:*
+        version: link:../../packages/core-extensions
       '@routebook/rinf-client':
         specifier: workspace:*
         version: link:../../packages/rinf-client

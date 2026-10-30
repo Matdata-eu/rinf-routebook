@@ -3,10 +3,11 @@
 # Routebook: web app + RINF data fetcher + server, in one image.
 # The output is JavaScript and WebAssembly only, so it is built once on the build
 # platform and copied into the image of every target platform.
-FROM --platform=$BUILDPLATFORM node:25-alpine AS build
+# Node.js LTS: odd majors (25, 27, ...) are never LTS and are out of support after six months.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /app
-# The node:25 images ship no corepack (and their yarn shim blocks installing it), so install pnpm
-# itself; keep the version the same as "packageManager" in package.json.
+# Install pnpm itself rather than through corepack (Node.js 25 and later ship no corepack); keep
+# the version the same as "packageManager" in package.json.
 RUN npm install -g pnpm@10.32.1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/cli/package.json apps/cli/
@@ -22,7 +23,7 @@ RUN pnpm build \
  && CI=true pnpm install --prod --frozen-lockfile --offline \
  && chmod -R a+rX /app
 
-FROM node:25-alpine
+FROM node:24-alpine
 LABEL org.opencontainers.image.title="Routebook" \
       org.opencontainers.image.description="Open-source railway routebook built on public ERA RINF data" \
       org.opencontainers.image.source="https://github.com/Matdata-eu/rinf-routebook" \

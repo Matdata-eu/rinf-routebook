@@ -28,7 +28,7 @@ The [code of conduct](CODE_OF_CONDUCT.md) applies to everything in this project.
 ## Pull requests
 
 - Keep changes focused, and add or update tests (Vitest, `packages/*/test` and `apps/*/test`).
-- `pnpm build`, `pnpm typecheck` and `pnpm test` must pass.
+- `pnpm build`, `pnpm typecheck`, `pnpm test` and `pnpm smoke` (needs Chrome) must pass.
 - For UI changes, attach screenshots (`pnpm screenshots` produces them headlessly).
 - Add a line to `CHANGELOG.md` under *Unreleased*.
 

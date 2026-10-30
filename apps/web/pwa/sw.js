@@ -2,7 +2,8 @@
  *
  * - The app shell (index.html and the hashed assets of this build) is cached when the worker installs.
  * - RINF data (config.json, datasets.json, the network index, the dataset bundles) goes to the network
- *   first, so it is always current online, and comes from the cache offline.
+ *   first, so it is always current online, and comes from the cache offline. The bundles of the
+ *   datasets used most recently are kept (MAX_DATA_DATASETS), the rest are dropped.
  * - The self-hosted basemap (basemap/: a PMTiles file read with range requests, its fonts) and the
  *   server's proxied tiles (tiles/) are kept as they are fetched, so a map seen once is there offline.
  * - Tiles of third-party services (OpenStreetMap, OpenRailwayMap, ...) are left alone: their terms
@@ -19,6 +20,10 @@ const MAP = "rb-map";
 const FONTS = "rb-fonts";
 /** at most this many map tiles and ranges are kept; the oldest go first */
 const MAX_MAP_ENTRIES = 4000;
+/** the bundles of at most this many datasets are kept (3 to 12 MB each); those used longest ago go first */
+const MAX_DATA_DATASETS = 8;
+/** folders of the data cache that are not a dataset's bundle */
+const NOT_DATASETS = new Set(["index", "plugins", "pwa"]);
 /** glyph hosts for map labels: their fonts never change */
 const FONT_HOSTS = ["protomaps.github.io", "demotiles.maplibre.org"];
 
@@ -119,10 +124,38 @@ async function rangeRequest(req) {
   return res;
 }
 
+/** The dataset folder of a data URL (`<scope>/<id>/<part>.json`), or undefined for anything else. */
+function datasetOf(url) {
+  const scope = new URL(self.registration.scope).pathname;
+  const path = new URL(url).pathname;
+  const rest = path.startsWith(scope) ? path.slice(scope.length) : path;
+  const m = /^([^/]+)\/[^/]+$/.exec(rest);
+  return m && !NOT_DATASETS.has(m[1]) ? m[1] : undefined;
+}
+
+/** Drop the bundles of the datasets used longest ago, keeping MAX_DATA_DATASETS (cache keys are in the order they were written). */
+async function trimData(cache) {
+  const keys = await cache.keys();
+  const lastUse = new Map();
+  keys.forEach((req, i) => {
+    const id = datasetOf(req.url);
+    if (id) lastUse.set(id, i);
+  });
+  if (lastUse.size <= MAX_DATA_DATASETS) return;
+  const drop = new Set([...lastUse.entries()].sort((a, b) => a[1] - b[1]).slice(0, lastUse.size - MAX_DATA_DATASETS).map(([id]) => id));
+  for (const req of keys) if (drop.has(datasetOf(req.url))) await cache.delete(req);
+}
+
 const puts = new Map();
 async function put(name, key, res) {
   const cache = await caches.open(name);
+  // a data entry is deleted first so that it moves to the end of the key order: the order tells which were used last
+  if (name === DATA) await cache.delete(key);
   await cache.put(key, res);
+  if (name === DATA) {
+    if (typeof key !== "string" && key.url.endsWith("/meta.json")) await trimData(cache);
+    return;
+  }
   if (name !== MAP) return;
   // trim now and then, not on every tile
   const n = (puts.get(name) ?? 0) + 1;

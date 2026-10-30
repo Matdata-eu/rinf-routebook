@@ -36,7 +36,7 @@ The dependency direction is strictly downwards. `rinf-client` holds the shared s
 
 ### routing
 
-- A state is "at end X of element E". Moving along an element costs `metres × factor(element)`. Only `NetRelation`s with navigability `Both` are followed, so a route never U-turns through a switch.
+- A state is "at end X of element E". Moving along an element costs `metres × factor(element)`. `NetRelation`s with navigability `Both` are followed both ways and those with `AB` or `BA` only in their direction; `None` is skipped, so a route never U-turns through a switch.
 - Endpoints are lists of intervals on elements. `opEndpoint` uses the OP centre points (`NetPointReference`) when they exist and falls back to the OP area (`NetAreaReference`).
 - `CostModel` is an interface. The default is `trackPreferenceCostModel`: running track ×1, siding ×5, unknown ×1.5. `lengthCostModel` uses pure distance.
 - The logic is ported from `docs/queries/route_test.py` and gives the same results for Oslo S–Lillestrøm and Oslo S–Drammen.
@@ -81,6 +81,8 @@ A `RoutebookPlugin` can contribute:
 - `costModels`: alternative routing cost models.
 
 `extendRoutebook(registry, snapshot, routebook)` merges and re-sorts the items without changing the inputs.
+
+The web app loads the plugin modules named in config.json (`plugins`, served by the deployment from its `plugins/` folder) at start-up: `RouteEngine` takes the cost model named by `costModel`, every routebook goes through `extendRoutebook`, and the overlays become map layers. The CLI does the same with `route --plugin <module>`. See [plugins.md](plugins.md); `examples/plugins/km-markers.js` is a minimal plugin.
 
 **Licensing model:** everything in this repository is MIT and uses only public RINF data. Paid or proprietary modules live in **separate repositories** and plug in through `core-extensions`; examples are IM-specific speed profiles, timetable-aware routing, PDF export and fleet features. The core never imports them. This keeps the open-source app fully usable while leaving room for commercial add-ons that don't fork the core.
 

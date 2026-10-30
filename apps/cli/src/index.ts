@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { appendFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import {
   DEFAULT_ENDPOINT,
@@ -26,6 +26,7 @@ import {
 } from "@routebook/rinf-client";
 import { RoutingGraph, lengthCostModel, opEndpoint, resolveOp, trackPreferenceCostModel } from "@routebook/routing";
 import { RoutebookIndex, buildRoutebook, formatRoutebook } from "@routebook/routebook";
+import { PluginRegistry, extendRoutebook, pluginsOf } from "@routebook/core-extensions";
 import { classifySwitches, compactSwitches } from "@routebook/schematic";
 
 const HELP = `routebook <command> [options]
@@ -66,6 +67,8 @@ Options:
   --minutes <n>             Minutes between two checks (sync; default ROUTEBOOK_SYNC_MINUTES or 60)
   --once                    One check and the fetches it calls for, then exit (sync)
   --force                   Fetch every dataset, changed or not (sync)
+  --keep-snapshots          Also write the full snapshot of each dataset (sync; default
+                            ROUTEBOOK_KEEP_SNAPSHOTS). Only the CLI's route, stats and bundle use them
   --data <dir>              Data folder (default ./data, or ROUTEBOOK_DATA_DIR)
   --snapshot <dir>          Snapshot directory (default <data>/snapshots/<dataset>)
   --endpoint <url>          SPARQL endpoint (default ${DEFAULT_ENDPOINT}, or ROUTEBOOK_SPARQL_ENDPOINT)
@@ -74,7 +77,9 @@ Options:
   --limit <n>               Max items to print (route, default all)
   --kinds <a,b>             Only print these item kinds (route)
   --area                    Use OP areas instead of OP centre points as endpoints
-  --cost <model>            prefer-running (default) | length
+  --cost <model>            prefer-running (default) | length | the id of a plugin's cost model
+  --plugin <module>         Load a RoutebookPlugin module (path or package name; repeatable, route).
+                            Its item providers extend the routebook (see docs/plugins.md)
   --json                    Print JSON instead of a table (route)
 `;
 
@@ -100,6 +105,7 @@ async function main() {
       minutes: { type: "string" },
       threshold: { type: "string" },
       once: { type: "boolean", default: false },
+      "keep-snapshots": { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       data: { type: "string" },
       snapshot: { type: "string" },
@@ -110,6 +116,7 @@ async function main() {
       area: { type: "boolean", default: false },
       cost: { type: "string", default: "prefer-running" },
       json: { type: "boolean", default: false },
+      plugin: { type: "string", multiple: true },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -155,8 +162,12 @@ async function main() {
     return;
   }
 
-  /** Fetch one dataset and write its snapshot, web bundle and the dataset index. */
-  const fetchDataset = async (dataset: CountryGraph, snapshotDir = join(dataRoot, "snapshots", folder(dataset.code))) => {
+  /**
+   * Fetch one dataset and write its web bundle, the dataset index and (unless `snapshotDir` is
+   * false) its snapshot. `networkIndex: false` leaves the merged network index to the caller,
+   * which rebuilds it once for a batch of datasets.
+   */
+  const fetchDataset = async (dataset: CountryGraph, snapshotDir: string | false = join(dataRoot, "snapshots", folder(dataset.code)), opts: { networkIndex?: boolean } = {}) => {
     const out = join(webRoot, folder(dataset.code));
     const graphs = graphsOf(dataset);
     const client = new SparqlClient({ graph: graphs[0]!, graphs, ...(endpoint ? { endpoint } : {}) });
@@ -172,12 +183,12 @@ async function main() {
         provenance,
         onWarning: (message) => console.error(`  warning: ${message}`),
       });
-      await saveSnapshot(snapshotDir, snapshot);
+      if (snapshotDir) await saveSnapshot(snapshotDir, snapshot);
       await saveWebBundle(out, snapshot, webExtras(snapshot));
-      await writeDatasetIndex(webRoot, { checkedAt: new Date().toISOString(), endpoint: client.endpoint });
+      await writeDatasetIndex(webRoot, { checkedAt: new Date().toISOString(), endpoint: client.endpoint, ...(opts.networkIndex === false ? { networkIndex: false } : {}) });
       const seconds = (Date.now() - t0) / 1000;
       const published = snapshot.meta.provenance?.map((g) => g.publishedAt?.slice(0, 10)).filter(Boolean);
-      console.error(`Saved to ${snapshotDir} and ${out} in ${seconds.toFixed(0)} s${published?.length ? ` (ERA publication ${[...new Set(published)].join(", ")})` : ""}`);
+      console.error(`Saved to ${snapshotDir ? `${snapshotDir} and ` : ""}${out} in ${seconds.toFixed(0)} s${published?.length ? ` (ERA publication ${[...new Set(published)].join(", ")})` : ""}`);
       return { snapshot, seconds };
     } catch (e) {
       // the previous bundle, if any, stays; the catalogue records the failure
@@ -186,6 +197,7 @@ async function main() {
         failures: [{ id: folder(dataset.code), name: dataset.name, ...(dataset.imName ? { imName: dataset.imName } : {}), error, graphs }],
         checkedAt: new Date().toISOString(),
         endpoint: client.endpoint,
+        networkIndex: false,
       }).catch(() => undefined);
       throw e;
     }
@@ -217,7 +229,8 @@ async function main() {
       // one retry: the endpoint occasionally times out or drops a long query
       for (let attempt = 1; ; attempt++) {
         try {
-          const { snapshot, seconds } = await fetchDataset(dataset);
+          // the network index is rebuilt once, after the last dataset
+          const { snapshot, seconds } = await fetchDataset(dataset, undefined, { networkIndex: false });
           results.push({ dataset, ops: snapshot.meta.counts.ops, seconds });
           break;
         } catch (e) {
@@ -282,8 +295,10 @@ async function main() {
       }
       return { datasets, all: false };
     };
+    // the server only needs the web bundles; the full snapshots (as large again) only on request
+    const keepSnapshots = values["keep-snapshots"] || ["1", "true", "yes"].includes((process.env.ROUTEBOOK_KEEP_SNAPSHOTS ?? "").toLowerCase());
     const fetchOne = async (item: SyncItem) => {
-      const { snapshot } = await fetchDataset(item.dataset);
+      const { snapshot } = await fetchDataset(item.dataset, keepSnapshots ? undefined : false, { networkIndex: false });
       return { ops: snapshot.meta.counts.ops };
     };
     log(`Keeping ${wanted || "the datasets in the catalogue"} current from ${lookup.endpoint}${values.once ? " (one pass)" : `, checking every ${minutes} min`}`);
@@ -358,16 +373,26 @@ async function main() {
     const mode = values.area ? "area" : "point";
     const src = opEndpoint(from, mode);
     const dst = opEndpoint(to, mode);
-    const costModel = values.cost === "length" ? lengthCostModel : trackPreferenceCostModel(snapshot.tracks);
+    const plugins = new PluginRegistry();
+    for (const spec of values.plugin ?? []) {
+      // a path (./x.js, /abs/x.js) relative to the working directory, or a package name
+      const url = /^[./]|^[A-Za-z]:[\\/]/.test(spec) ? pathToFileURL(resolve(spec)).href : spec;
+      for (const p of await pluginsOf(await import(url), spec)) plugins.register(p);
+    }
+    const costModel =
+      values.cost === "length" ? lengthCostModel
+      : values.cost === "prefer-running" ? trackPreferenceCostModel(snapshot.tracks)
+      : plugins.costModel(values.cost, snapshot) ?? fail(`Unknown cost model "${values.cost}" (prefer-running, length, or one of a --plugin)`);
     const route = graph.route(src.intervals, dst.intervals, { costModel });
     if (!route) throw new Error(`No route between ${from.name} and ${to.name}`);
-    const rb = buildRoutebook({
+    const core = buildRoutebook({
       index: new RoutebookIndex(snapshot),
       route,
       from,
       to,
       endpointModes: { from: src.mode, to: dst.mode },
     });
+    const rb = plugins.list().length ? await extendRoutebook(plugins, snapshot, core, { datasets: [id] }) : core;
     if (values.json) {
       console.log(JSON.stringify({ ...rb, route: { ...rb.route, steps: rb.route.steps.length } }, null, 2));
     } else {
@@ -381,6 +406,10 @@ async function main() {
     return;
   }
   throw new Error(`Unknown command "${cmd}"\n\n${HELP}`);
+}
+
+function fail(message: string): never {
+  throw new Error(message);
 }
 
 main().catch((e: unknown) => {

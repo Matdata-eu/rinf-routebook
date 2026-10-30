@@ -200,10 +200,17 @@ export function pickDataset(list: DatasetInfo[], requested: string | null | unde
   return ids[0] ?? "nor";
 }
 
-/** "RINF © ERA, data: Bane NOR" style credit for the data of a snapshot. */
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/**
+ * "RINF © ERA, data: Bane NOR" style credit for the data of a snapshot. As HTML (the map's
+ * attribution) the infrastructure manager's name is escaped: it comes from the data, not from us.
+ */
 export function rinfAttribution(meta: Pick<SnapshotMeta, "imName" | "name" | "country">, opts: { html?: boolean } = {}): string {
-  const era = opts.html === false ? "European Union Agency for Railways" : `<a href="https://graph.data.era.europa.eu/">European Union Agency for Railways</a>`;
-  return `RINF data © ${era}${meta.imName ? `, provided by ${meta.imName}` : ""}`;
+  const html = opts.html !== false;
+  const era = html ? `<a href="https://graph.data.era.europa.eu/">European Union Agency for Railways</a>` : "European Union Agency for Railways";
+  const im = meta.imName ? (html ? escapeHtml(meta.imName) : meta.imName) : "";
+  return `RINF data © ${era}${im ? `, provided by ${im}` : ""}`;
 }
 
 /** Example routes that are known to work, per dataset. Deployments add their own in config.json (`examples`). */

@@ -28,6 +28,8 @@ import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provena
 import { openDatasetsDialog } from "./datasets-dialog.js";
 import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
 import { renderBrand } from "./brand.js";
+import { loadPlugins, showOverlays } from "./plugins.js";
+import { extendRoutebook, overlayLayers } from "@routebook/core-extensions";
 import { openHelp } from "./help.js";
 import { currentTheme, followSystemTheme, mapColors, onThemeChange, setTheme, themedRasterPaint } from "./theme.js";
 
@@ -36,6 +38,13 @@ const BASE = import.meta.env.BASE_URL;
 // runtime configuration (config.json, written by the server from its settings) and the datasets on offer
 const [CONFIG, CATALOGUE] = await Promise.all([loadRuntimeConfig(`${BASE}config.json`), loadCatalogue(`${BASE}datasets.json`)]);
 const DATASETS = loadable(CATALOGUE.datasets);
+// plugins named in config.json: loaded once, before anything is routed (a broken one is skipped)
+const PLUGINS = await loadPlugins(CONFIG.plugins, new URL(BASE, location.href).href);
+for (const e of PLUGINS.errors) console.warn(`RouteBook plugin not loaded: ${e}`);
+const pluginCostModel = CONFIG.costModel ? (snapshot: Parameters<typeof PLUGINS.registry.costModel>[1]) => PLUGINS.registry.costModel(CONFIG.costModel!, snapshot) : undefined;
+/** Engine options shared by every RouteEngine: the switches of the bundle and the plugins' cost model. */
+const engineOpts = (bundle: Bundle) => ({ ...(bundle.switches ? { switches: bundle.switches } : {}), ...(pluginCostModel ? { costModel: pluginCostModel } : {}) });
+const pluginLayers = new Set<string>();
 /** The dataset the map and the search are limited to; undefined: all of them. Deep links (`?dataset=`) and the Network picker set it. */
 let FILTER = pickFilter(DATASETS, params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
 const datasetName = (id: string) => CATALOGUE.datasets.find((d) => d.id === id)?.name ?? network?.datasets[id]?.name ?? id;
@@ -50,6 +59,22 @@ function setState(state: "loading" | "ready" | "routing" | "routed" | "error", m
   document.body.dataset.state = state;
   status.textContent = message;
   status.classList.toggle("error", state === "error");
+  if (state === "error" && message) addDismiss();
+}
+
+/** A close button on an error in the status line, so it does not stay until the next action. */
+function addDismiss(): void {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "status-dismiss";
+  btn.textContent = "×";
+  btn.title = "Dismiss";
+  btn.setAttribute("aria-label", "Dismiss the message");
+  btn.addEventListener("click", () => {
+    status.textContent = "";
+    status.classList.remove("error");
+  });
+  status.append(" ", btn);
 }
 
 // ---------------------------------------------------------------- map
@@ -411,6 +436,7 @@ function pickOnMap(op: IndexOp): void {
   if (!op.routable) {
     setState(result ? "routed" : "ready", `${op.name} has no position on the track network in RINF, so a route cannot start or end there.`);
     status.classList.add("error");
+    addDismiss();
     return;
   }
   if (nextRole() === "to") {
@@ -476,10 +502,14 @@ let schematicZoom = 1;
 let schematicView: SchematicView | undefined;
 let selectedDistance: number | undefined;
 
-const STORAGE_KEY = "routebook.hiddenKinds";
+/** routebook-<name>, like the theme and the disclaimer keys; the old dotted key is read once and moved */
+const STORAGE_KEY = "routebook-hidden-kinds";
 const hiddenKinds = new Set<string>(
   (() => {
     try {
+      const old = localStorage.getItem("routebook.hiddenKinds");
+      if (old !== null && localStorage.getItem(STORAGE_KEY) === null) localStorage.setItem(STORAGE_KEY, old);
+      localStorage.removeItem("routebook.hiddenKinds");
       return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as string[];
     } catch {
       return [];
@@ -492,6 +522,7 @@ function setEndpoint(role: "from" | "to", op: IndexOp | undefined): void {
     (role === "from" ? fromInput : toInput).value = selection[role]?.name ?? "";
     setState(document.body.dataset.state === "routed" ? "routed" : "ready", `${op.name} has no position on the track network in RINF, so a route cannot start or end there.`);
     status.classList.add("error");
+    addDismiss();
     return;
   }
   if (op) selection[role] = op;
@@ -504,7 +535,23 @@ function opLngLat(op: Pick<IndexOp, "lon" | "lat">): LngLat | undefined {
   return op.lon !== undefined && op.lat !== undefined ? [op.lon, op.lat] : undefined;
 }
 
+/**
+ * Keep the URL in step with the app, at most twice a second: Safari refuses more than 100
+ * history.replaceState calls in 30 s, and a running train or a drag would otherwise make them.
+ */
+let urlWrittenAt = 0;
+let urlTimer: ReturnType<typeof setTimeout> | undefined;
 function syncUrl(): void {
+  const wait = urlWrittenAt + 500 - Date.now();
+  if (wait <= 0) return writeUrl();
+  urlTimer ??= setTimeout(() => {
+    urlTimer = undefined;
+    writeUrl();
+  }, wait);
+}
+
+function writeUrl(): void {
+  urlWrittenAt = Date.now();
   const url = new URL(location.href);
   for (const role of ["from", "to"] as const) {
     const op = selection[role];
@@ -532,7 +579,11 @@ function syncUrl(): void {
   const own = pickFilter(DATASETS, null, CONFIG.defaultDataset);
   if (FILTER !== own) url.searchParams.set("dataset", FILTER ?? "all");
   else url.searchParams.delete("dataset");
-  history.replaceState(null, "", url);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* the browser refuses for now: the next change writes it */
+  }
 }
 
 function setParam(url: URL, key: string, value: string | undefined): void {
@@ -585,7 +636,7 @@ function loadEngine(id: string): Promise<{ engine: RouteEngine; bundle: Bundle }
   if (!pending) {
     pending = loadBundle(`${BASE}${id}`)
       .then((bundle) => {
-        const loaded = { engine: new RouteEngine(bundle.snapshot, bundle.switches ? { switches: bundle.switches } : {}), bundle };
+        const loaded = { engine: new RouteEngine(bundle.snapshot, engineOpts(bundle)), bundle };
         // keep the browser's memory in check: drop the datasets loaded longest ago, never the route's
         for (const [old] of engines) {
           if (engines.size < MAX_LOADED) break;
@@ -633,7 +684,7 @@ async function engineFor(from: IndexOp, to: IndexOp, token: number): Promise<{ e
     await new Promise((r) => setTimeout(r, 0)); // let the status paint
     if (token !== computeToken) return undefined;
     const { bundle, networks } = mergeBundles(parts.map((p) => ({ id: p.id, bundle: p.bundle, label: datasetName(p.id) })), network!.borders.links);
-    joined = merged = { key, bundle, engine: new RouteEngine(bundle.snapshot, { ...(bundle.switches ? { switches: bundle.switches } : {}), networks }) };
+    joined = merged = { key, bundle, engine: new RouteEngine(bundle.snapshot, { ...engineOpts(bundle), networks }) };
   }
   return { engine: joined.engine, datasets: chain, ops };
 }
@@ -647,6 +698,9 @@ async function compute(token: number): Promise<void> {
     const { engine, datasets, ops } = found;
     const t0 = performance.now();
     result = { ...engine.route(ops[0], ops[1]), engine, datasets };
+    const warning = await extendWithPlugins(result, engine.snapshot, datasets);
+    if (token !== computeToken) return;
+    void drawPluginOverlays(engine.snapshot, result.routebook.route);
     drive.setNetwork(engine.snapshot.geometry ?? {});
     const ms = Math.round(performance.now() - t0);
     (map.getSource("route") as GeoJSONSource).setData({
@@ -667,7 +721,7 @@ async function compute(token: number): Promise<void> {
       driveStart = undefined;
     }
     updateProvenance(result.datasets);
-    setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)`);
+    setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)${warning ? `. ${warning}` : ""}`);
   } catch (e) {
     if (token !== computeToken) return;
     result = undefined;
@@ -679,6 +733,25 @@ async function compute(token: number): Promise<void> {
     if (view === "drive") drive.start(undefined);
     setState("error", e instanceof Error ? e.message : String(e));
   }
+}
+
+/** Add the plugins' items to the routebook; on a failure the core routebook stays and a warning is returned. */
+async function extendWithPlugins(routed: Routed, snapshot: RouteEngine["snapshot"], datasets: string[]): Promise<string | undefined> {
+  if (!PLUGINS.registry.itemProviders().length) return undefined;
+  try {
+    routed.routebook = await extendRoutebook(PLUGINS.registry, snapshot, routed.routebook, { datasets });
+    return undefined;
+  } catch (e) {
+    console.warn("RouteBook plugin failed", e);
+    return `Plugin items left out: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+/** The plugins' map overlays, for the current route (or none). */
+async function drawPluginOverlays(snapshot: RouteEngine["snapshot"], route?: RouteResult["routebook"]["route"]): Promise<void> {
+  if (!PLUGINS.registry.overlays().length) return;
+  const layers = await overlayLayers(PLUGINS.registry, { snapshot, ...(route ? { route } : {}) }, (id, e) => console.warn(`RouteBook overlay ${id} failed`, e));
+  showOverlays(map, layers, pluginLayers, { before: "route-casing", color: mapColors().selected });
 }
 
 function drawRoutebook(): void {
@@ -774,7 +847,11 @@ function setView(next: View): void {
   $("schematic").hidden = next !== "schematic";
   $("strip").hidden = next !== "strip";
   document.body.dataset.view = next;
-  for (const v of VIEWS) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+  for (const v of VIEWS) {
+    $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+    // one tab stop for the tab list; the arrow keys move between the tabs
+    $(`tab-${v}`).tabIndex = next === v ? 0 : -1;
+  }
   if (next !== "drive") drive.stop();
   if (next !== "strip") strip.pause();
   else strip.shown();
@@ -889,6 +966,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
     list.replaceChildren();
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
     active = -1;
   };
   const pick = (op: IndexOp) => {
@@ -901,6 +979,8 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
       ...options.map((op, i) => {
         const li = document.createElement("li");
         li.setAttribute("role", "option");
+        li.id = `${list.id}-${i}`;
+        li.setAttribute("aria-selected", String(i === active));
         li.className = `${i === active ? "active" : ""}${op.routable ? "" : " unroutable"}`.trim();
         const n = document.createElement("span");
         n.textContent = op.name;
@@ -917,6 +997,8 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
     );
     list.hidden = options.length === 0;
     input.setAttribute("aria-expanded", String(options.length > 0));
+    if (active >= 0 && options.length) input.setAttribute("aria-activedescendant", `${list.id}-${active}`);
+    else input.removeAttribute("aria-activedescendant");
   };
   input.addEventListener("input", () => {
     options = searchOps(searchIndex, input.value);
@@ -991,10 +1073,18 @@ $("clear").addEventListener("click", () => {
   fromInput.value = toInput.value = "";
   update();
 });
-$("tab-map").addEventListener("click", () => setView("map"));
-$("tab-schematic").addEventListener("click", () => setView("schematic"));
-$("tab-strip").addEventListener("click", () => setView("strip"));
-$("tab-drive").addEventListener("click", () => setView("drive"));
+// the view tabs: a click, or the arrow keys, Home and End when one has focus (WAI-ARIA tabs pattern)
+for (const v of VIEWS) $(`tab-${v}`).addEventListener("click", () => setView(v));
+$("tab-map").parentElement!.addEventListener("keydown", (e) => {
+  const i = VIEWS.indexOf(view);
+  const next = e.key === "ArrowRight" ? (i + 1) % VIEWS.length : e.key === "ArrowLeft" ? (i + VIEWS.length - 1) % VIEWS.length : e.key === "Home" ? 0 : e.key === "End" ? VIEWS.length - 1 : -1;
+  if (next < 0) return;
+  e.preventDefault();
+  setView(VIEWS[next]!);
+  $(`tab-${VIEWS[next]}`).focus();
+});
+// Enter in From or To picks from the list; the form itself never submits
+document.querySelector("form.picker")?.addEventListener("submit", (e) => e.preventDefault());
 strip.configure({
   ...(STRIP_ZOOMS.some((z) => String(z) === params.get("km")) ? { zoom: Number(params.get("km")) } : {}),
   aheadUp: params.get("ahead") !== "down",
@@ -1204,7 +1294,7 @@ async function loadIndexOrBundle(): Promise<Network> {
   if (indexed && indexed.ops.length) return indexed;
   const id = pickDataset(DATASETS, FILTER ?? params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
   const bundle = await loadBundle(`${BASE}${id}`);
-  engines.set(id, { engine: new RouteEngine(bundle.snapshot, bundle.switches ? { switches: bundle.switches } : {}), bundle });
+  engines.set(id, { engine: new RouteEngine(bundle.snapshot, engineOpts(bundle)), bundle });
   FILTER = id;
   return networkFromBundle(id, bundle.snapshot);
 }
