@@ -12,6 +12,8 @@ services:
     environment:
       ROUTEBOOK_DATASETS: all
       ROUTEBOOK_SYNC_MINUTES: ${ROUTEBOOK_SYNC_MINUTES:-60}
+      # behind the reverse proxy: the tile rate limit counts users (X-Forwarded-For), not the proxy
+      ROUTEBOOK_TRUST_PROXY: "1"
       # the largest networks (Germany, France) need more than Node's default heap while they are fetched
       NODE_OPTIONS: --max-old-space-size=6144
     env_file:
