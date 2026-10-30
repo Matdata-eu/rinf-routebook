@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { appendFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import {
   DEFAULT_ENDPOINT,
@@ -26,6 +26,7 @@ import {
 } from "@routebook/rinf-client";
 import { RoutingGraph, lengthCostModel, opEndpoint, resolveOp, trackPreferenceCostModel } from "@routebook/routing";
 import { RoutebookIndex, buildRoutebook, formatRoutebook } from "@routebook/routebook";
+import { PluginRegistry, extendRoutebook, pluginsOf } from "@routebook/core-extensions";
 import { classifySwitches, compactSwitches } from "@routebook/schematic";
 
 const HELP = `routebook <command> [options]
@@ -74,7 +75,9 @@ Options:
   --limit <n>               Max items to print (route, default all)
   --kinds <a,b>             Only print these item kinds (route)
   --area                    Use OP areas instead of OP centre points as endpoints
-  --cost <model>            prefer-running (default) | length
+  --cost <model>            prefer-running (default) | length | the id of a plugin's cost model
+  --plugin <module>         Load a RoutebookPlugin module (path or package name; repeatable, route).
+                            Its item providers extend the routebook (see docs/plugins.md)
   --json                    Print JSON instead of a table (route)
 `;
 
@@ -110,6 +113,7 @@ async function main() {
       area: { type: "boolean", default: false },
       cost: { type: "string", default: "prefer-running" },
       json: { type: "boolean", default: false },
+      plugin: { type: "string", multiple: true },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -358,16 +362,26 @@ async function main() {
     const mode = values.area ? "area" : "point";
     const src = opEndpoint(from, mode);
     const dst = opEndpoint(to, mode);
-    const costModel = values.cost === "length" ? lengthCostModel : trackPreferenceCostModel(snapshot.tracks);
+    const plugins = new PluginRegistry();
+    for (const spec of values.plugin ?? []) {
+      // a path (./x.js, /abs/x.js) relative to the working directory, or a package name
+      const url = /^[./]|^[A-Za-z]:[\\/]/.test(spec) ? pathToFileURL(resolve(spec)).href : spec;
+      for (const p of await pluginsOf(await import(url), spec)) plugins.register(p);
+    }
+    const costModel =
+      values.cost === "length" ? lengthCostModel
+      : values.cost === "prefer-running" ? trackPreferenceCostModel(snapshot.tracks)
+      : plugins.costModel(values.cost, snapshot) ?? fail(`Unknown cost model "${values.cost}" (prefer-running, length, or one of a --plugin)`);
     const route = graph.route(src.intervals, dst.intervals, { costModel });
     if (!route) throw new Error(`No route between ${from.name} and ${to.name}`);
-    const rb = buildRoutebook({
+    const core = buildRoutebook({
       index: new RoutebookIndex(snapshot),
       route,
       from,
       to,
       endpointModes: { from: src.mode, to: dst.mode },
     });
+    const rb = plugins.list().length ? await extendRoutebook(plugins, snapshot, core, { datasets: [id] }) : core;
     if (values.json) {
       console.log(JSON.stringify({ ...rb, route: { ...rb.route, steps: rb.route.steps.length } }, null, 2));
     } else {
@@ -381,6 +395,10 @@ async function main() {
     return;
   }
   throw new Error(`Unknown command "${cmd}"\n\n${HELP}`);
+}
+
+function fail(message: string): never {
+  throw new Error(message);
 }
 
 main().catch((e: unknown) => {

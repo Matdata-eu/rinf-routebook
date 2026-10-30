@@ -105,7 +105,7 @@ Routebook is a demonstration of what public RINF data can do. It is not meant fo
 ## Scope
 
 - **Open core (this repository, MIT):** the RINF client, routing, the routebook model, the plugin interface, the web app, the CLI and the Docker image. It only uses public RINF data, and it is useful on its own.
-- **Extensions (separate repositories):** for example, detailed speed profiles from an infrastructure manager, timetable-aware routing, branded PDF export, or fleet features. They plug into [`packages/core-extensions`](packages/core-extensions/src/index.ts) and never require changes to, or a fork of, the core. See [docs/architecture.md](docs/architecture.md#core-extensions-the-open-core-boundary).
+- **Extensions (separate repositories):** for example, detailed speed profiles from an infrastructure manager, timetable-aware routing, branded PDF export, or fleet features. They plug into [`packages/core-extensions`](packages/core-extensions/src/index.ts) and never require changes to, or a fork of, the core. A deployment loads them from config.json (`plugins`); see [docs/plugins.md](docs/plugins.md).
 
 Status: **early preview** (see the [changelog](CHANGELOG.md)).
 

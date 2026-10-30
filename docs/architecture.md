@@ -82,6 +82,8 @@ A `RoutebookPlugin` can contribute:
 
 `extendRoutebook(registry, snapshot, routebook)` merges and re-sorts the items without changing the inputs.
 
+The web app loads the plugin modules named in config.json (`plugins`, served by the deployment from its `plugins/` folder) at start-up: `RouteEngine` takes the cost model named by `costModel`, every routebook goes through `extendRoutebook`, and the overlays become map layers. The CLI does the same with `route --plugin <module>`. See [plugins.md](plugins.md); `examples/plugins/km-markers.js` is a minimal plugin.
+
 **Licensing model:** everything in this repository is MIT and uses only public RINF data. Paid or proprietary modules live in **separate repositories** and plug in through `core-extensions`; examples are IM-specific speed profiles, timetable-aware routing, PDF export and fleet features. The core never imports them. This keeps the open-source app fully usable while leaving room for commercial add-ons that don't fork the core.
 
 ## Apps
