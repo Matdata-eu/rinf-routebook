@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { esriLayer, inBounds, loadConfig, pmtilesLayer, loadPrivacy, parseTilePath, privacyPage, publicConfig, substituteEnv, tileBbox3857, upstreamUrl } from "../runtime-config.mjs";
-import { byteRange, health, startServer, startSync } from "../serve.mjs";
+import { byteRange, contentSecurityPolicy, createRateLimiter, createTileCache, health, inlineScriptHashes, startServer, startSync } from "../serve.mjs";
 import { buildStatic } from "../build-static.mjs";
 import { readFile } from "node:fs/promises";
 
@@ -60,6 +60,9 @@ describe("runtime configuration", () => {
     expect(loadPrivacy({ file: "privacy.html" }, dir)).toEqual({ label: "Privacy", html: "<h1>Privacy</h1><p>Hi</p>" });
     expect(loadPrivacy({ file: "missing.html" }, dir, quiet)).toBeUndefined();
     expect(loadPrivacy({ text: "  " })).toBeUndefined();
+    // a plain text is never HTML, even when it looks a bit like it
+    expect(loadPrivacy({ text: "We <3 privacy & a < b > c" })).toEqual({ label: "Privacy", html: "<p>We &lt;3 privacy &amp; a &lt; b &gt; c</p>" });
+    expect(loadPrivacy({ html: "<p>Own <b>HTML</b></p>" })).toEqual({ label: "Privacy", html: "<p>Own <b>HTML</b></p>" });
     const page = privacyPage({ label: "Privacy", html: "<p>Hi</p>" }, "Rail & Co");
     expect(page).toContain("<title>Privacy · Rail &amp; Co</title>");
     expect(page).toContain("<h1>Privacy</h1>");
@@ -157,6 +160,106 @@ describe("server", () => {
     expect(await (await fetch(`${base(server)}/basemap/fonts/Noto%20Sans%20Regular/0-255.pbf`)).text()).toBe("glyphs");
     expect((await fetch(`${base(server)}/basemap/../web/x`)).status).toBe(404);
     expect((await fetch(`${base(server)}/basemap/missing.pmtiles`)).status).toBe(404);
+  });
+
+  it("survives malformed URLs and answers them", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "rbdist-"));
+    const data = await mkdtemp(join(tmpdir(), "rbdata-"));
+    await writeFile(join(dist, "index.html"), "<!doctype html>");
+    const server = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config: {} });
+    servers.push(server);
+    for (const p of ["/%", "/%e0", "/basemap/%zz", "/nor/%00.json"]) expect((await fetch(`${base(server)}${p}`)).status).toBeGreaterThanOrEqual(400);
+    // still up
+    expect((await fetch(`${base(server)}/healthz`)).status).toBe(200);
+  });
+
+  it("sends a Content-Security-Policy with the hashes of the page's inline scripts", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "rbdist-"));
+    const data = await mkdtemp(join(tmpdir(), "rbdata-"));
+    const html = `<!doctype html><script>var t = 1;</script><script type="module" src="./a.js"></script>`;
+    await writeFile(join(dist, "index.html"), html);
+    const [hash] = inlineScriptHashes(html);
+    expect(inlineScriptHashes(html)).toHaveLength(1);
+    expect(hash).toMatch(/^sha256-/);
+    const server = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config: {} });
+    servers.push(server);
+    const csp = (await fetch(`${base(server)}/`)).headers.get("content-security-policy")!;
+    expect(csp).toBe(contentSecurityPolicy([hash!]));
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain(`'${hash}'`);
+    expect((await fetch(`${base(server)}/healthz`)).headers.get("content-security-policy")).toBeNull();
+    const off = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config: { contentSecurityPolicy: false } });
+    servers.push(off);
+    expect((await fetch(`${base(off)}/`)).headers.get("content-security-policy")).toBeNull();
+  });
+
+  it("keeps the tile proxy for its own app: no other sites, a rate limit and a shared cache", async () => {
+    let hits = 0;
+    const upstream = createServer((req, res) => {
+      hits++;
+      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": req.url?.includes("/9/") ? "no-store" : "max-age=600" }).end(`tile ${req.url}`);
+    });
+    await new Promise<void>((ok) => upstream.listen(0, "127.0.0.1", ok));
+    servers.push(upstream);
+    const dist = await mkdtemp(join(tmpdir(), "rbdist-"));
+    const data = await mkdtemp(join(tmpdir(), "rbdata-"));
+    await writeFile(join(dist, "index.html"), "<!doctype html>");
+    const config = { basemaps: [{ id: "k", tiles: [`${base(upstream)}/{z}/{x}/{y}`], proxy: true }], overlays: [] };
+    const server = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config, tileRate: 4, tileCacheMb: 1 });
+    servers.push(server);
+    const get = (p: string, headers: Record<string, string> = {}) => fetch(`${base(server)}${p}`, { headers });
+    expect((await get("/tiles/k/3/4/5", { "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
+    expect(hits).toBe(0);
+    expect(await (await get("/tiles/k/3/4/5", { "Sec-Fetch-Site": "same-origin" })).text()).toBe("tile /3/4/5");
+    expect(await (await get("/tiles/k/3/4/5")).text()).toBe("tile /3/4/5");
+    expect(hits).toBe(1); // the second came from the cache
+    await get("/tiles/k/9/4/5");
+    await get("/tiles/k/9/4/5");
+    expect(hits).toBe(3); // no-store is never cached
+    expect((await get("/tiles/k/3/4/6")).status).toBe(429);
+  });
+
+  it("serves plugin modules from the plugins folder, also under a sub-path", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "rbdist-"));
+    const data = await mkdtemp(join(tmpdir(), "rbdata-"));
+    await writeFile(join(dist, "index.html"), "<!doctype html>");
+    await mkdir(join(data, "plugins"));
+    await writeFile(join(data, "plugins", "acme.js"), "export default { id: 'acme', name: 'Acme', version: '1' };");
+    const server = await startServer(dist, 0, "127.0.0.1", { dataDir: data, config: { basemaps: [], overlays: [] } });
+    servers.push(server);
+    const res = await fetch(`${base(server)}/app/plugins/acme.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/javascript");
+    expect(await res.text()).toContain("acme");
+    expect((await fetch(`${base(server)}/plugins/../plugins/acme.js`)).status).toBe(200); // normalised by the URL parser
+    expect((await fetch(`${base(server)}/plugins/%2e%2e%2fsecret.js`)).status).toBe(404);
+  });
+
+  it("limits requests per client with a refilling bucket", () => {
+    let t = 0;
+    const allow = createRateLimiter(60, () => t);
+    for (let i = 0; i < 60; i++) expect(allow("a")).toBe(true);
+    expect(allow("a")).toBe(false);
+    expect(allow("b")).toBe(true);
+    t += 1000; // one more token a second
+    expect(allow("a")).toBe(true);
+    expect(allow("a")).toBe(false);
+    expect(createRateLimiter(0)("a")).toBe(true);
+  });
+
+  it("caches tiles within a memory budget, least recently used out first", () => {
+    let t = 0;
+    const cache = createTileCache(30, () => t);
+    cache.set("a", "image/png", "max-age=60", Buffer.alloc(3));
+    cache.set("b", "image/png", "max-age=60", Buffer.alloc(3));
+    cache.set("p", "image/png", "private, max-age=60", Buffer.alloc(3));
+    expect(cache.get("p")).toBeUndefined();
+    expect(cache.get("a")).toBeDefined();
+    for (const k of ["c", "d", "e", "f", "g", "h", "i", "j", "k"]) cache.set(k, "image/png", undefined, Buffer.alloc(3));
+    expect(cache.get("a")).toBeDefined(); // used recently
+    expect(cache.get("b")).toBeUndefined(); // the oldest went
+    t += 61_000;
+    expect(cache.get("a")).toBeUndefined(); // expired
   });
 
   it("reads byte ranges", () => {

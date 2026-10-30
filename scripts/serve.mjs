@@ -6,8 +6,13 @@
 // Usage: node scripts/serve.mjs [dir=apps/web/dist] [port=4173]
 // Environment: PORT, HOST (default 127.0.0.1; 0.0.0.0 in Docker), ROUTEBOOK_DATA_DIR (default ./data),
 // ROUTEBOOK_BASEMAP_DIR (default <data>/basemap: a self-hosted basemap, served at basemap/),
+// ROUTEBOOK_PLUGINS_DIR (default <data>/plugins: plugin modules for config `plugins`, served at plugins/),
 // ROUTEBOOK_SYNC_MINUTES (> 0 runs `routebook sync` next to the server, keeping the data current),
+// ROUTEBOOK_TILE_RATE (proxied tiles per minute per client, default 1200, 0 = no limit),
+// ROUTEBOOK_TILE_CACHE_MB (memory for proxied tiles, default 64, 0 = none), ROUTEBOOK_TRUST_PROXY
+// (1: take the client address from X-Forwarded-For, for a server behind a reverse proxy),
 // and the configuration variables in scripts/runtime-config.mjs.
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -34,6 +39,48 @@ const TYPES = {
 };
 const COMPRESS = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".map", ".wasm"]);
 const SECURITY = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin" };
+
+/**
+ * The Content-Security-Policy of the app: scripts and workers from this server only (plus the
+ * inline scripts of index.html, by hash, and WebAssembly for the schematic solver), map tiles,
+ * fonts and glyphs from any https or http host (deployers add their own layers), no plugins,
+ * no framing. `extra` adds hashes of inline scripts (see inlineScriptHashes).
+ */
+export function contentSecurityPolicy(extra = []) {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'wasm-unsafe-eval'${extra.map((h) => ` '${h}'`).join("")}`,
+    "worker-src 'self' blob:",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https: http:",
+    "font-src 'self' data:",
+    "connect-src 'self' https: http:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+/** sha256 hashes of the inline <script> elements of an HTML page, for script-src. */
+export function inlineScriptHashes(html) {
+  const out = [];
+  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
+    if (!m[1].trim()) continue;
+    out.push(`sha256-${createHash("sha256").update(m[1], "utf8").digest("base64")}`);
+  }
+  return out;
+}
+
+/** Pipe a file into a response; a file that vanished or cannot be read ends the response instead of the server. */
+function sendFile(res, path, opts) {
+  const stream = createReadStream(path, opts);
+  stream.on("error", () => {
+    if (!res.headersSent) res.writeHead(500, SECURITY);
+    res.destroy();
+  });
+  return stream;
+}
 
 /**
  * datasets.json: the catalogue the CLI wrote (`routebook fetch` / `index`: status, what ERA
@@ -117,23 +164,23 @@ function json(res, body, status = 200) {
  * A file of the self-hosted basemap (`<basemap dir>/<path>`): a PMTiles file, read by the browser
  * with range requests, and its fonts. Cacheable for a day; a new extract should get a new name.
  */
-function serveBasemapFile(req, res, dir, rel) {
+function serveBasemapFile(req, res, dir, rel, headersExtra = {}) {
   const path = findFile([dir], `/${rel}`);
   if (!path) return void res.writeHead(404, { "Content-Type": "text/plain", ...SECURITY }).end("Not found");
   const stat = statSync(path);
   const etag = etagOf(stat);
-  const headers = { "Content-Type": TYPES[extname(path)] ?? "application/octet-stream", "Cache-Control": "public, max-age=86400", ETag: etag, "Accept-Ranges": "bytes", ...SECURITY };
+  const headers = { "Content-Type": TYPES[extname(path)] ?? "application/octet-stream", "Cache-Control": "public, max-age=86400", ETag: etag, "Accept-Ranges": "bytes", ...SECURITY, ...headersExtra };
   const range = byteRange(req.headers.range, stat.size);
   if (range === null) return void res.writeHead(416, { ...headers, "Content-Range": `bytes */${stat.size}` }).end();
   if (!range && req.headers["if-none-match"]?.split(",").some((t) => t.trim() === etag)) return void res.writeHead(304, headers).end();
   if (range) {
     res.writeHead(206, { ...headers, "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`, "Content-Length": range.end - range.start + 1 });
     if (req.method === "HEAD") return void res.end();
-    return void createReadStream(path, range).pipe(res);
+    return void sendFile(res, path, range).pipe(res);
   }
   res.writeHead(200, { ...headers, "Content-Length": stat.size });
   if (req.method === "HEAD") return void res.end();
-  createReadStream(path).pipe(res);
+  sendFile(res, path).pipe(res);
 }
 
 /** One `Range: bytes=a-b` (or `a-`, `-n`) of a file of `size` bytes: undefined for none, null when it cannot be satisfied. */
@@ -153,10 +200,17 @@ export function byteRange(header, size) {
   return { start, end };
 }
 
-/** Resolve a URL path inside one of the roots; undefined when it is outside them or missing. */
+/** Resolve a URL path inside one of the roots; undefined when it is outside them, missing or not a valid URL path. */
 function findFile(roots, pathname) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return undefined; // malformed percent-encoding: no such file
+  }
+  if (decoded.includes("\0")) return undefined;
   for (const root of roots) {
-    let path = normalize(join(root, decodeURIComponent(pathname)));
+    let path = normalize(join(root, decoded));
     if (!path.startsWith(root + sep) && path !== root) return undefined;
     try {
       if (statSync(path).isDirectory()) path = join(path, "index.html");
@@ -177,25 +231,125 @@ function warnOnce(layer, problem) {
   console.warn(`Tile proxy "${layer.id}": ${problem}`);
 }
 
-async function proxyTile(req, res, layer, t) {
+/**
+ * Requests per minute per client for proxied tiles: a token bucket that refills continuously, so a
+ * map being panned is never slowed down while a script pulling the whole layer through the proxy
+ * (and spending the deployer's key) is.
+ */
+export function createRateLimiter(perMinute, now = () => Date.now()) {
+  const buckets = new Map();
+  let sweep = now();
+  return (client) => {
+    if (!(perMinute > 0)) return true;
+    const t = now();
+    if (t - sweep > 600_000) {
+      for (const [k, b] of buckets) if (t - b.at > 600_000) buckets.delete(k);
+      sweep = t;
+    }
+    const b = buckets.get(client) ?? { tokens: perMinute, at: t };
+    b.tokens = Math.min(perMinute, b.tokens + ((t - b.at) / 60_000) * perMinute);
+    b.at = t;
+    buckets.set(client, b);
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
+  };
+}
+
+/**
+ * Proxied tiles kept in memory, least recently used out first, for as long as the provider's
+ * Cache-Control allows (at most a day; nothing with no-store, no-cache or private, as for any
+ * shared HTTP cache). Many users looking at the same area then cost the provider one request.
+ */
+export function createTileCache(maxBytes, now = () => Date.now()) {
+  const entries = new Map();
+  let bytes = 0;
+  const drop = (key) => {
+    const e = entries.get(key);
+    if (!e) return;
+    bytes -= e.body.length;
+    entries.delete(key);
+  };
+  return {
+    get(key) {
+      const e = entries.get(key);
+      if (!e) return undefined;
+      if (e.expires <= now()) return void drop(key);
+      entries.delete(key);
+      entries.set(key, e);
+      return e;
+    },
+    set(key, contentType, cacheControl, body) {
+      if (!(maxBytes > 0) || body.length > maxBytes / 8) return;
+      const cc = (cacheControl ?? "").toLowerCase();
+      if (/no-store|no-cache|private/.test(cc)) return;
+      const m = /(?:s-maxage|max-age)=(\d+)/.exec(cc);
+      const seconds = Math.min(86_400, m ? Number(m[1]) : 3600);
+      if (!(seconds > 0)) return;
+      drop(key);
+      entries.set(key, { contentType, cacheControl, body, expires: now() + seconds * 1000 });
+      bytes += body.length;
+      for (const k of entries.keys()) {
+        if (bytes <= maxBytes) break;
+        drop(k);
+      }
+    },
+    get size() {
+      return entries.size;
+    },
+  };
+}
+
+/** The client's address: the socket's, or with trustProxy the last X-Forwarded-For hop the reverse proxy added. */
+function clientOf(req, trustProxy) {
+  if (trustProxy) {
+    const hops = String(req.headers["x-forwarded-for"] ?? "").split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length) return hops.at(-1);
+  }
+  return req.socket?.remoteAddress ?? "?";
+}
+
+async function proxyTile(req, res, layer, t, ctx) {
+  // the proxy serves this app's pages, not other sites' maps (browsers say where a request comes from)
+  if (req.headers["sec-fetch-site"] === "cross-site") {
+    res.writeHead(403, { "Content-Type": "text/plain", ...SECURITY }).end("Tiles of this server are for its own app");
+    return;
+  }
   if (!inBounds(layer, t.z, t.x, t.y)) {
     res.writeHead(204, SECURITY).end();
     return;
+  }
+  if (!ctx.allow(clientOf(req, ctx.trustProxy))) {
+    res.writeHead(429, { "Content-Type": "text/plain", "Retry-After": "10", ...SECURITY }).end("Too many tile requests");
+    return;
+  }
+  const key = `${layer.id}/${t.z}/${t.x}/${t.y}`;
+  const hit = ctx.cache.get(key);
+  if (hit) {
+    res.writeHead(200, { "Content-Type": hit.contentType, "Cache-Control": hit.cacheControl ?? "public, max-age=86400", "Content-Length": hit.body.length, ...SECURITY });
+    return void res.end(req.method === "HEAD" ? undefined : hit.body);
   }
   try {
     const upstream = await fetch(upstreamUrl(layer, t.z, t.x, t.y), {
       headers: { "User-Agent": "Routebook tile proxy (+https://github.com/Matdata-eu/rinf-routebook)", ...(layer.headers ?? {}) },
       signal: AbortSignal.timeout(20_000),
     });
+    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
+    const cacheControl = upstream.headers.get("cache-control");
     const headers = {
-      "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
-      "Cache-Control": upstream.ok ? (upstream.headers.get("cache-control") ?? "public, max-age=86400") : "no-cache",
+      "Content-Type": contentType,
+      "Cache-Control": upstream.ok ? (cacheControl ?? "public, max-age=86400") : "no-cache",
       ...SECURITY,
     };
     if (!upstream.ok && upstream.status !== 404) warnOnce(layer, `upstream answered ${upstream.status} ${upstream.statusText}`);
-    res.writeHead(upstream.ok ? 200 : upstream.status === 404 ? 404 : 502, headers);
-    if (upstream.body && req.method !== "HEAD") Readable.fromWeb(upstream.body).pipe(res);
-    else res.end();
+    if (!upstream.ok || !upstream.body) {
+      res.writeHead(upstream.ok ? 200 : upstream.status === 404 ? 404 : 502, headers);
+      return void res.end();
+    }
+    const body = Buffer.from(await upstream.arrayBuffer());
+    ctx.cache.set(key, contentType, cacheControl, body);
+    res.writeHead(200, { ...headers, "Content-Length": body.length });
+    res.end(req.method === "HEAD" ? undefined : body);
   } catch (e) {
     warnOnce(layer, `cannot reach the tile service (${e?.cause?.message ?? e?.message ?? e})`);
     if (!res.headersSent) res.writeHead(502, SECURITY);
@@ -207,7 +361,7 @@ async function proxyTile(req, res, layer, t) {
  * @param {string} dir built web app (apps/web/dist)
  * @param {number} [port]
  * @param {string} [host]
- * @param {{ dataDir?: string, basemapDir?: string, config?: object }} [opts] data folder with web/<dataset> bundles; self-hosted basemap folder; configuration (default: loadConfig())
+ * @param {{ dataDir?: string, basemapDir?: string, pluginsDir?: string, config?: object, tileRate?: number, tileCacheMb?: number, trustProxy?: boolean }} [opts] data folder with web/<dataset> bundles; self-hosted basemap folder; plugin modules folder; configuration (default: loadConfig()); tile proxy limits (default: the environment)
  */
 export function startServer(dir, port = 4173, host = "127.0.0.1", opts = {}) {
   const handler = createHandler(dir, opts);
@@ -290,13 +444,37 @@ export function createHandler(dir, opts = {}) {
   const root = resolve(dir);
   const dataWeb = resolve(opts.dataDir ?? process.env.ROUTEBOOK_DATA_DIR ?? "data", "web");
   const basemapDir = resolve(opts.basemapDir ?? process.env.ROUTEBOOK_BASEMAP_DIR ?? join(opts.dataDir ?? process.env.ROUTEBOOK_DATA_DIR ?? "data", "basemap"));
+  const pluginsDir = resolve(opts.pluginsDir ?? process.env.ROUTEBOOK_PLUGINS_DIR ?? join(opts.dataDir ?? process.env.ROUTEBOOK_DATA_DIR ?? "data", "plugins"));
   const roots = [dataWeb, root];
   const config = opts.config ?? loadConfig();
   const browserConfig = publicConfig(config);
   const proxied = proxiedLayers(config);
   const sync = opts.sync;
+  const env = opts.env ?? process.env;
+  const num = (v, d) => (v === undefined || v === "" || !Number.isFinite(Number(v)) ? d : Number(v));
+  const tiles = {
+    allow: createRateLimiter(num(opts.tileRate ?? env.ROUTEBOOK_TILE_RATE, 1200)),
+    cache: createTileCache(num(opts.tileCacheMb ?? env.ROUTEBOOK_TILE_CACHE_MB, 64) * 1048576),
+    trustProxy: (opts.trustProxy ?? env.ROUTEBOOK_TRUST_PROXY) === true || ["1", "true", "yes"].includes(String(opts.trustProxy ?? env.ROUTEBOOK_TRUST_PROXY ?? "").toLowerCase()),
+  };
+  // the policy for HTML pages; config `contentSecurityPolicy`: false for none, a string for your own
+  let csp;
+  const cspFor = () => {
+    if (config.contentSecurityPolicy === false) return {};
+    if (typeof config.contentSecurityPolicy === "string" && config.contentSecurityPolicy.trim()) return { "Content-Security-Policy": config.contentSecurityPolicy.trim() };
+    if (csp === undefined) {
+      let html = "";
+      try {
+        html = readFileSync(join(root, "index.html"), "utf8");
+      } catch {
+        /* no build here (dev server, tests) */
+      }
+      csp = contentSecurityPolicy(inlineScriptHashes(html));
+    }
+    return { "Content-Security-Policy": csp };
+  };
 
-  return (req, res, next) => {
+  const handle = (req, res, next) => {
     const url = new URL(req.url ?? "/", "http://x");
     // the app can be served under a sub-path: match on the end of the path
     const p = url.pathname;
@@ -308,31 +486,40 @@ export function createHandler(dir, opts = {}) {
     if (p.endsWith("/config.json")) return json(res, browserConfig);
     if (p.endsWith("/datasets.json")) return json(res, listDatasets(roots));
     if (p.endsWith("/privacy.html") && config.privacy?.html) {
-      res.writeHead(200, { "Content-Type": TYPES[".html"], "Cache-Control": "no-cache", ...SECURITY });
+      res.writeHead(200, { "Content-Type": TYPES[".html"], "Cache-Control": "no-cache", ...SECURITY, ...cspFor() });
       return void res.end(req.method === "HEAD" ? undefined : privacyPage(config.privacy, config.title));
     }
     const tile = p.includes("/tiles/") ? parseTilePath(p) : undefined;
     if (tile) {
       const layer = proxied.get(tile.id);
-      if (layer) return void proxyTile(req, res, layer, tile);
+      if (layer) return void proxyTile(req, res, layer, tile, tiles);
       res.writeHead(404, SECURITY).end();
       return;
     }
     const bm = /\/basemap\/(.+)$/.exec(p);
     if (bm) return serveBasemapFile(req, res, basemapDir, bm[1]);
-    if (next) return next();
+    // plugin modules (config `plugins`): from their own folder, so that a deployment adds them without rebuilding the app
+    const plugin = /\/plugins\/(.+)$/.exec(p);
+    if (next && !plugin) return next();
 
-    const path = findFile(roots, p);
+    const path = plugin ? findFile([pluginsDir], `/${plugin[1]}`) : findFile(roots, p);
     if (!path) {
       res.writeHead(404, { "Content-Type": "text/plain", ...SECURITY }).end("Not found");
       return;
     }
     const ext = extname(path);
-    const stat = statSync(path);
+    let stat;
+    try {
+      stat = statSync(path);
+    } catch {
+      // swapped out by the sync between the lookup and now
+      res.writeHead(404, { "Content-Type": "text/plain", ...SECURITY }).end("Not found");
+      return;
+    }
     const etag = etagOf(stat);
     // Vite puts a content hash in asset names: those can be cached for good
     const immutable = /[\\/]assets[\\/]/.test(path) && path.startsWith(root);
-    const headers = { "Content-Type": TYPES[ext] ?? "application/octet-stream", "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache", ETag: etag, ...SECURITY };
+    const headers = { "Content-Type": TYPES[ext] ?? "application/octet-stream", "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache", ETag: etag, ...SECURITY, ...(ext === ".html" ? cspFor() : {}) };
     const acceptEncoding = req.headers["accept-encoding"] ?? "";
     const ready = COMPRESS.has(ext) ? precompressed(path, stat, acceptEncoding) : undefined;
     if (ready) headers.Vary = "Accept-Encoding";
@@ -343,17 +530,35 @@ export function createHandler(dir, opts = {}) {
     }
     if (ready) {
       // the bundle was precompressed when it was written: send it as it is
-      res.writeHead(200, { ...headers, "Content-Encoding": ready.encoding, "Content-Length": statSync(ready.path).size });
+      let size;
+      try {
+        size = statSync(ready.path).size;
+      } catch {
+        res.writeHead(404, { "Content-Type": "text/plain", ...SECURITY }).end("Not found");
+        return;
+      }
+      res.writeHead(200, { ...headers, "Content-Encoding": ready.encoding, "Content-Length": size });
       if (req.method === "HEAD") return void res.end();
-      createReadStream(ready.path).pipe(res);
+      sendFile(res, ready.path).pipe(res);
     } else if (COMPRESS.has(ext) && /\bgzip\b/.test(acceptEncoding)) {
       res.writeHead(200, { ...headers, "Content-Encoding": "gzip", Vary: "Accept-Encoding" });
       if (req.method === "HEAD") return void res.end();
-      createReadStream(path).pipe(createGzip()).pipe(res);
+      sendFile(res, path).pipe(createGzip()).pipe(res);
     } else {
       res.writeHead(200, headers);
       if (req.method === "HEAD") return void res.end();
-      createReadStream(path).pipe(res);
+      sendFile(res, path).pipe(res);
+    }
+  };
+
+  // one bad request must never stop the server (and the sync running next to it)
+  return (req, res, next) => {
+    try {
+      handle(req, res, next);
+    } catch (e) {
+      if (!(e instanceof URIError)) console.error(`Request ${req.method} ${req.url} failed: ${e?.stack ?? e}`);
+      if (!res.headersSent) res.writeHead(e instanceof URIError ? 400 : 500, { "Content-Type": "text/plain", ...SECURITY });
+      res.end(e instanceof URIError ? "Bad request" : "Server error");
     }
   };
 }
