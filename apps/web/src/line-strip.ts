@@ -101,6 +101,7 @@ export class LineStrip {
   private frame = 0;
   private sim: TrainSim | undefined;
   private playing = false;
+  private reportedAt = -Infinity;
   private rate = 30;
   private lastTick = 0;
   private readonly scroll: HTMLElement;
@@ -295,7 +296,11 @@ export class LineStrip {
       this.lastTick = now;
       this.sim.step(dt * this.rate);
       this.setPosition(this.sim.d);
-      this.opts.onPosition?.(this.sim.d);
+      // the position is worth keeping (in the URL) every 200 m, not every frame
+      if (Math.abs(this.sim.d - this.reportedAt) > 200 || this.sim.finished) {
+        this.reportedAt = this.sim.d;
+        this.opts.onPosition?.(this.sim.d);
+      }
       if (this.sim.finished) return this.pause();
       requestAnimationFrame(tick);
     };
