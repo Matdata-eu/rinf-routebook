@@ -33,6 +33,10 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+    ignore:
+      # the image stays on a Node.js LTS line: a new major is a deliberate change (odd majors are never LTS)
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
