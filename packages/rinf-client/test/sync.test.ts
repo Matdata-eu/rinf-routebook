@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { gunzipSync, brotliDecompressSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -199,6 +199,32 @@ describe("sync pass", () => {
     });
     expect(result.fetched.map((f) => f.id)).toEqual(["nor"]);
     expect((await readCatalogue(root)).datasets.find((d) => d.id === "bel")?.status).toBe("pending");
+  });
+});
+
+describe("network index during a sync", () => {
+  it("is rebuilt once at the end of a pass, not after every dataset", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rbsync-"));
+    const exists = (p: string) => stat(p).then(() => true, () => false);
+    const index = join(root, "index");
+    const during: boolean[] = [];
+    await runSync({
+      endpoint: ENDPOINT,
+      datasetsApi: API,
+      fetchImpl: era({}, { "0076": 1, "0088": 1 }),
+      datasets: [nor, bel],
+      webRoot: root,
+      attempts: 1,
+      fetchDataset: async (item) => {
+        // the pass's first catalogue write built it; take it away to see whether it comes back
+        if (!during.length) await rm(index, { recursive: true, force: true });
+        during.push(await exists(index));
+        await bundle(root, item.dataset, item.latest);
+        return { ops: 1 };
+      },
+    });
+    expect(during).toEqual([false, false]);
+    expect(await exists(join(index, "ops.json"))).toBe(true);
   });
 });
 
