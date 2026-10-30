@@ -23,3 +23,5 @@ jobs:
       - run: pnpm typecheck
       # the layout quality test needs a fetched snapshot and is skipped here
       - run: pnpm test
+      # the built app in a browser, under its Content-Security-Policy (the runner's Chrome)
+      - run: pnpm smoke
