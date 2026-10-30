@@ -49,6 +49,8 @@ export interface EngineOptions {
   switches?: CompactSwitch[];
   /** On a merged bundle: which dataset each element belongs to, for the border items of the routebook. */
   networks?: NetworkLabels;
+  /** A routing cost model for this snapshot (e.g. a plugin's); undefined: the built-in track preference model. */
+  costModel?: (snapshot: Snapshot) => CostModel | undefined;
 }
 
 /**
@@ -109,7 +111,7 @@ export class RouteEngine {
   constructor(readonly snapshot: Snapshot, opts: EngineOptions = {}) {
     this.graph = new RoutingGraph(snapshot.topology);
     this.index = new RoutebookIndex(snapshot);
-    this.costModel = trackPreferenceCostModel(snapshot.tracks);
+    this.costModel = opts.costModel?.(snapshot) ?? trackPreferenceCostModel(snapshot.tracks);
     this.switchRows = opts.switches;
     this.networks = opts.networks;
   }
