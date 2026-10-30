@@ -110,6 +110,13 @@ export interface RunSyncOptions extends Omit<PlanOptions, "catalogue"> {
   /** Stop before the next dataset when this returns true (a shutdown). */
   stopped?: () => boolean;
   log?: (message: string) => void;
+  /**
+   * Rebuild the network index (index/ops.json, sols.json, borders.json: all datasets merged) at
+   * most this often during a pass, and once at its end (default 10 min). `fetchDataset` should
+   * leave it alone (writeDatasetIndex with `networkIndex: false`).
+   */
+  networkIndexEveryMs?: number;
+  now?: () => number;
 }
 
 /**
@@ -119,7 +126,10 @@ export interface RunSyncOptions extends Omit<PlanOptions, "catalogue"> {
  */
 export async function runSync(opts: RunSyncOptions): Promise<SyncResult> {
   const log = opts.log ?? (() => undefined);
-  const { webRoot, fetchDataset, attempts = 2, stopped = () => false } = opts;
+  const { webRoot, fetchDataset, attempts = 2, stopped = () => false, networkIndexEveryMs = 600_000, now = Date.now } = opts;
+  // the network index merges every dataset: rebuilt now and then while fetching, and at the end
+  let indexedAt = now();
+  let unindexed = false;
   await removeLeftovers(webRoot);
   const checkedAt = new Date().toISOString();
   const catalogue = await readCatalogue(webRoot);
@@ -159,12 +169,20 @@ export async function runSync(opts: RunSyncOptions): Promise<SyncResult> {
     if (error) {
       result.failed.push({ id: item.id, reason: item.reason, error });
       await writeDatasetIndex(webRoot, {
+        networkIndex: false,
         failures: [{ id: item.id, name: item.dataset.name, ...(item.dataset.imName ? { imName: item.dataset.imName } : {}), error, graphs: graphsOf(item.dataset), at: new Date().toISOString() }],
       }).catch(() => undefined);
     } else {
-      await writeDatasetIndex(webRoot, { available: { [item.id]: item.latest } });
+      unindexed = true;
+      const rebuild = now() - indexedAt >= networkIndexEveryMs;
+      await writeDatasetIndex(webRoot, { available: { [item.id]: item.latest }, networkIndex: rebuild });
+      if (rebuild) {
+        indexedAt = now();
+        unindexed = false;
+      }
     }
   }
+  if (unindexed) await writeDatasetIndex(webRoot);
   sample();
   log(`Done: ${result.fetched.length} fetched, ${result.failed.length} failed, ${plan.current.length} unchanged; peak memory ${result.peakMemoryMb} MB`);
   return result;
