@@ -66,6 +66,7 @@ pnpm dev:web                                # http://127.0.0.1:5173
 | `pnpm route "Oslo S" Drammen --limit 40` | Prints a routebook in the terminal (`--dataset`, `--json`, `--kinds signal,switch`, `--area`, `--cost length`) |
 | `pnpm test` / `pnpm typecheck` | Vitest suite / TypeScript checks |
 | `pnpm screenshots` | Headless screenshots into `docs/screenshots` (uses your installed Chrome, `--channel msedge` for Edge) |
+| `pnpm smoke` | Browser smoke test of the built app: a small synthetic dataset and the example plugin, every view, no page errors or Content-Security-Policy violations (uses your installed Chrome, or `CHROME_PATH`; CI runs it) |
 
 ## How routing works
 
