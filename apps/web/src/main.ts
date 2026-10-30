@@ -28,6 +28,8 @@ import { datasetsSummary, fmtDate, loadCatalogue, loadable, pickDataset, provena
 import { openDatasetsDialog } from "./datasets-dialog.js";
 import { installDisclaimer, resolveDisclaimer } from "./disclaimer.js";
 import { renderBrand } from "./brand.js";
+import { loadPlugins, showOverlays } from "./plugins.js";
+import { extendRoutebook, overlayLayers } from "@routebook/core-extensions";
 import { openHelp } from "./help.js";
 import { currentTheme, followSystemTheme, mapColors, onThemeChange, setTheme, themedRasterPaint } from "./theme.js";
 
@@ -36,6 +38,13 @@ const BASE = import.meta.env.BASE_URL;
 // runtime configuration (config.json, written by the server from its settings) and the datasets on offer
 const [CONFIG, CATALOGUE] = await Promise.all([loadRuntimeConfig(`${BASE}config.json`), loadCatalogue(`${BASE}datasets.json`)]);
 const DATASETS = loadable(CATALOGUE.datasets);
+// plugins named in config.json: loaded once, before anything is routed (a broken one is skipped)
+const PLUGINS = await loadPlugins(CONFIG.plugins, new URL(BASE, location.href).href);
+for (const e of PLUGINS.errors) console.warn(`RouteBook plugin not loaded: ${e}`);
+const pluginCostModel = CONFIG.costModel ? (snapshot: Parameters<typeof PLUGINS.registry.costModel>[1]) => PLUGINS.registry.costModel(CONFIG.costModel!, snapshot) : undefined;
+/** Engine options shared by every RouteEngine: the switches of the bundle and the plugins' cost model. */
+const engineOpts = (bundle: Bundle) => ({ ...(bundle.switches ? { switches: bundle.switches } : {}), ...(pluginCostModel ? { costModel: pluginCostModel } : {}) });
+const pluginLayers = new Set<string>();
 /** The dataset the map and the search are limited to; undefined: all of them. Deep links (`?dataset=`) and the Network picker set it. */
 let FILTER = pickFilter(DATASETS, params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
 const datasetName = (id: string) => CATALOGUE.datasets.find((d) => d.id === id)?.name ?? network?.datasets[id]?.name ?? id;
@@ -627,7 +636,7 @@ function loadEngine(id: string): Promise<{ engine: RouteEngine; bundle: Bundle }
   if (!pending) {
     pending = loadBundle(`${BASE}${id}`)
       .then((bundle) => {
-        const loaded = { engine: new RouteEngine(bundle.snapshot, bundle.switches ? { switches: bundle.switches } : {}), bundle };
+        const loaded = { engine: new RouteEngine(bundle.snapshot, engineOpts(bundle)), bundle };
         // keep the browser's memory in check: drop the datasets loaded longest ago, never the route's
         for (const [old] of engines) {
           if (engines.size < MAX_LOADED) break;
@@ -675,7 +684,7 @@ async function engineFor(from: IndexOp, to: IndexOp, token: number): Promise<{ e
     await new Promise((r) => setTimeout(r, 0)); // let the status paint
     if (token !== computeToken) return undefined;
     const { bundle, networks } = mergeBundles(parts.map((p) => ({ id: p.id, bundle: p.bundle, label: datasetName(p.id) })), network!.borders.links);
-    joined = merged = { key, bundle, engine: new RouteEngine(bundle.snapshot, { ...(bundle.switches ? { switches: bundle.switches } : {}), networks }) };
+    joined = merged = { key, bundle, engine: new RouteEngine(bundle.snapshot, { ...engineOpts(bundle), networks }) };
   }
   return { engine: joined.engine, datasets: chain, ops };
 }
@@ -689,6 +698,9 @@ async function compute(token: number): Promise<void> {
     const { engine, datasets, ops } = found;
     const t0 = performance.now();
     result = { ...engine.route(ops[0], ops[1]), engine, datasets };
+    const warning = await extendWithPlugins(result, engine.snapshot, datasets);
+    if (token !== computeToken) return;
+    void drawPluginOverlays(engine.snapshot, result.routebook.route);
     drive.setNetwork(engine.snapshot.geometry ?? {});
     const ms = Math.round(performance.now() - t0);
     (map.getSource("route") as GeoJSONSource).setData({
@@ -709,7 +721,7 @@ async function compute(token: number): Promise<void> {
       driveStart = undefined;
     }
     updateProvenance(result.datasets);
-    setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)`);
+    setState("routed", `${(result.routebook.length / 1000).toFixed(1)} km, ${result.routebook.items.length} items (${ms} ms)${warning ? `. ${warning}` : ""}`);
   } catch (e) {
     if (token !== computeToken) return;
     result = undefined;
@@ -721,6 +733,25 @@ async function compute(token: number): Promise<void> {
     if (view === "drive") drive.start(undefined);
     setState("error", e instanceof Error ? e.message : String(e));
   }
+}
+
+/** Add the plugins' items to the routebook; on a failure the core routebook stays and a warning is returned. */
+async function extendWithPlugins(routed: Routed, snapshot: RouteEngine["snapshot"], datasets: string[]): Promise<string | undefined> {
+  if (!PLUGINS.registry.itemProviders().length) return undefined;
+  try {
+    routed.routebook = await extendRoutebook(PLUGINS.registry, snapshot, routed.routebook, { datasets });
+    return undefined;
+  } catch (e) {
+    console.warn("RouteBook plugin failed", e);
+    return `Plugin items left out: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+/** The plugins' map overlays, for the current route (or none). */
+async function drawPluginOverlays(snapshot: RouteEngine["snapshot"], route?: RouteResult["routebook"]["route"]): Promise<void> {
+  if (!PLUGINS.registry.overlays().length) return;
+  const layers = await overlayLayers(PLUGINS.registry, { snapshot, ...(route ? { route } : {}) }, (id, e) => console.warn(`RouteBook overlay ${id} failed`, e));
+  showOverlays(map, layers, pluginLayers, { before: "route-casing", color: mapColors().selected });
 }
 
 function drawRoutebook(): void {
@@ -1263,7 +1294,7 @@ async function loadIndexOrBundle(): Promise<Network> {
   if (indexed && indexed.ops.length) return indexed;
   const id = pickDataset(DATASETS, FILTER ?? params.get("dataset") ?? params.get("country"), CONFIG.defaultDataset);
   const bundle = await loadBundle(`${BASE}${id}`);
-  engines.set(id, { engine: new RouteEngine(bundle.snapshot, bundle.switches ? { switches: bundle.switches } : {}), bundle });
+  engines.set(id, { engine: new RouteEngine(bundle.snapshot, engineOpts(bundle)), bundle });
   FILTER = id;
   return networkFromBundle(id, bundle.snapshot);
 }

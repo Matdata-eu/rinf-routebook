@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Snapshot } from "@routebook/rinf-client";
 import type { Routebook } from "@routebook/routebook";
-import { PluginRegistry, extendRoutebook, type RoutebookPlugin } from "@routebook/core-extensions";
+import { PluginRegistry, extendRoutebook, overlayLayers, pluginsOf, type RoutebookPlugin } from "@routebook/core-extensions";
 
 const routebook = {
   from: { id: "a", uopid: "A", name: "A", points: [], areas: [] },
@@ -50,5 +50,32 @@ describe("core-extensions", () => {
 
   it("rejects duplicate plugin ids", () => {
     expect(() => new PluginRegistry().register(speedBoards).register(speedBoards)).toThrow(/already registered/);
+  });
+
+  it("reads plugins from a module: a default export, a list or a factory", async () => {
+    expect((await pluginsOf({ default: speedBoards })).map((p) => p.id)).toEqual(["acme"]);
+    expect((await pluginsOf({ plugins: [speedBoards, { ...speedBoards, id: "two" }] })).map((p) => p.id)).toEqual(["acme", "two"]);
+    expect((await pluginsOf({ default: async () => speedBoards })).map((p) => p.id)).toEqual(["acme"]);
+    await expect(pluginsOf({ default: 42 }, "x.js")).rejects.toThrow(/x\.js exports no RoutebookPlugin/);
+  });
+
+  it("passes the datasets of the route to providers and collects overlays, skipping broken ones", async () => {
+    let seen: string[] | undefined;
+    const reg = new PluginRegistry().register({
+      id: "geo",
+      name: "Geo",
+      version: "1",
+      itemProviders: [{ id: "p", provideItems: (ctx) => ((seen = ctx.datasets), []) }],
+      overlays: [
+        { id: "ok", getLayers: () => [{ id: "pts", title: "Points", geojson: { type: "FeatureCollection", features: [] } }] },
+        { id: "broken", getLayers: () => { throw new Error("no"); } },
+      ],
+    });
+    await extendRoutebook(reg, {} as Snapshot, routebook, { datasets: ["nor", "swe"] });
+    expect(seen).toEqual(["nor", "swe"]);
+    const errors: string[] = [];
+    const layers = await overlayLayers(reg, { snapshot: {} as Snapshot }, (id) => errors.push(id));
+    expect(layers.map((l) => l.id)).toEqual(["pts"]);
+    expect(errors).toEqual(["broken"]);
   });
 });

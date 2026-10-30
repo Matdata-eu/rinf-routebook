@@ -98,6 +98,10 @@ export interface RuntimeConfig {
    * `{ publisher, banner, title, text, print }` changes the wording, false switches it off.
    */
   disclaimer?: DisclaimerConfig | boolean;
+  /** Plugin modules to load (ES modules, URLs relative to the app, e.g. "plugins/acme.js"). See docs/plugins.md. */
+  plugins?: string[];
+  /** Routing cost model by id, from a plugin (default: the built-in track preference model). */
+  costModel?: string;
 }
 
 /**
