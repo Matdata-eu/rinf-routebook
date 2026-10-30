@@ -161,6 +161,8 @@ a:hover { color: var(--brand-strong); }
 /* under the fields, with its line always reserved: a message never moves the controls */
 .status { font-size: 14px; line-height: 20px; color: var(--ink-muted); margin-top: 4px; min-height: 20px; font-variant-numeric: tabular-nums; }
 .status.error { color: var(--danger); font-weight: 600; }
+.status-dismiss { border: 0; background: none; color: inherit; font: inherit; font-size: 16px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: var(--radius-sm, 4px); }
+.status-dismiss:hover, .status-dismiss:focus-visible { background: var(--surface-sunken, rgba(0,0,0,.06)); }
 .btn.chip { min-height: 34px; font-size: 14px; font-weight: 500; padding: 0 var(--space-3); margin-bottom: 28px; white-space: nowrap; color: var(--ink-muted); border-radius: var(--radius-pill); }
 .btn.chip b { color: var(--ink); font-weight: 600; }
 .btn.chip .badge { display: inline-flex; align-items: center; height: 22px; padding: 0 var(--space-2); border-radius: var(--radius-pill); background: var(--brand-soft); color: var(--brand-strong); font-size: 13px; font-weight: 500; }

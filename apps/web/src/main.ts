@@ -50,6 +50,22 @@ function setState(state: "loading" | "ready" | "routing" | "routed" | "error", m
   document.body.dataset.state = state;
   status.textContent = message;
   status.classList.toggle("error", state === "error");
+  if (state === "error" && message) addDismiss();
+}
+
+/** A close button on an error in the status line, so it does not stay until the next action. */
+function addDismiss(): void {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "status-dismiss";
+  btn.textContent = "×";
+  btn.title = "Dismiss";
+  btn.setAttribute("aria-label", "Dismiss the message");
+  btn.addEventListener("click", () => {
+    status.textContent = "";
+    status.classList.remove("error");
+  });
+  status.append(" ", btn);
 }
 
 // ---------------------------------------------------------------- map
@@ -411,6 +427,7 @@ function pickOnMap(op: IndexOp): void {
   if (!op.routable) {
     setState(result ? "routed" : "ready", `${op.name} has no position on the track network in RINF, so a route cannot start or end there.`);
     status.classList.add("error");
+    addDismiss();
     return;
   }
   if (nextRole() === "to") {
@@ -476,10 +493,14 @@ let schematicZoom = 1;
 let schematicView: SchematicView | undefined;
 let selectedDistance: number | undefined;
 
-const STORAGE_KEY = "routebook.hiddenKinds";
+/** routebook-<name>, like the theme and the disclaimer keys; the old dotted key is read once and moved */
+const STORAGE_KEY = "routebook-hidden-kinds";
 const hiddenKinds = new Set<string>(
   (() => {
     try {
+      const old = localStorage.getItem("routebook.hiddenKinds");
+      if (old !== null && localStorage.getItem(STORAGE_KEY) === null) localStorage.setItem(STORAGE_KEY, old);
+      localStorage.removeItem("routebook.hiddenKinds");
       return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as string[];
     } catch {
       return [];
@@ -492,6 +513,7 @@ function setEndpoint(role: "from" | "to", op: IndexOp | undefined): void {
     (role === "from" ? fromInput : toInput).value = selection[role]?.name ?? "";
     setState(document.body.dataset.state === "routed" ? "routed" : "ready", `${op.name} has no position on the track network in RINF, so a route cannot start or end there.`);
     status.classList.add("error");
+    addDismiss();
     return;
   }
   if (op) selection[role] = op;
@@ -504,7 +526,23 @@ function opLngLat(op: Pick<IndexOp, "lon" | "lat">): LngLat | undefined {
   return op.lon !== undefined && op.lat !== undefined ? [op.lon, op.lat] : undefined;
 }
 
+/**
+ * Keep the URL in step with the app, at most twice a second: Safari refuses more than 100
+ * history.replaceState calls in 30 s, and a running train or a drag would otherwise make them.
+ */
+let urlWrittenAt = 0;
+let urlTimer: ReturnType<typeof setTimeout> | undefined;
 function syncUrl(): void {
+  const wait = urlWrittenAt + 500 - Date.now();
+  if (wait <= 0) return writeUrl();
+  urlTimer ??= setTimeout(() => {
+    urlTimer = undefined;
+    writeUrl();
+  }, wait);
+}
+
+function writeUrl(): void {
+  urlWrittenAt = Date.now();
   const url = new URL(location.href);
   for (const role of ["from", "to"] as const) {
     const op = selection[role];
@@ -532,7 +570,11 @@ function syncUrl(): void {
   const own = pickFilter(DATASETS, null, CONFIG.defaultDataset);
   if (FILTER !== own) url.searchParams.set("dataset", FILTER ?? "all");
   else url.searchParams.delete("dataset");
-  history.replaceState(null, "", url);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* the browser refuses for now: the next change writes it */
+  }
 }
 
 function setParam(url: URL, key: string, value: string | undefined): void {
@@ -774,7 +816,11 @@ function setView(next: View): void {
   $("schematic").hidden = next !== "schematic";
   $("strip").hidden = next !== "strip";
   document.body.dataset.view = next;
-  for (const v of VIEWS) $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+  for (const v of VIEWS) {
+    $(`tab-${v}`).setAttribute("aria-selected", String(next === v));
+    // one tab stop for the tab list; the arrow keys move between the tabs
+    $(`tab-${v}`).tabIndex = next === v ? 0 : -1;
+  }
   if (next !== "drive") drive.stop();
   if (next !== "strip") strip.pause();
   else strip.shown();
@@ -889,6 +935,7 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
     list.replaceChildren();
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
     active = -1;
   };
   const pick = (op: IndexOp) => {
@@ -901,6 +948,8 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
       ...options.map((op, i) => {
         const li = document.createElement("li");
         li.setAttribute("role", "option");
+        li.id = `${list.id}-${i}`;
+        li.setAttribute("aria-selected", String(i === active));
         li.className = `${i === active ? "active" : ""}${op.routable ? "" : " unroutable"}`.trim();
         const n = document.createElement("span");
         n.textContent = op.name;
@@ -917,6 +966,8 @@ function attachAutocomplete(input: HTMLInputElement, role: "from" | "to"): void 
     );
     list.hidden = options.length === 0;
     input.setAttribute("aria-expanded", String(options.length > 0));
+    if (active >= 0 && options.length) input.setAttribute("aria-activedescendant", `${list.id}-${active}`);
+    else input.removeAttribute("aria-activedescendant");
   };
   input.addEventListener("input", () => {
     options = searchOps(searchIndex, input.value);
@@ -991,10 +1042,18 @@ $("clear").addEventListener("click", () => {
   fromInput.value = toInput.value = "";
   update();
 });
-$("tab-map").addEventListener("click", () => setView("map"));
-$("tab-schematic").addEventListener("click", () => setView("schematic"));
-$("tab-strip").addEventListener("click", () => setView("strip"));
-$("tab-drive").addEventListener("click", () => setView("drive"));
+// the view tabs: a click, or the arrow keys, Home and End when one has focus (WAI-ARIA tabs pattern)
+for (const v of VIEWS) $(`tab-${v}`).addEventListener("click", () => setView(v));
+$("tab-map").parentElement!.addEventListener("keydown", (e) => {
+  const i = VIEWS.indexOf(view);
+  const next = e.key === "ArrowRight" ? (i + 1) % VIEWS.length : e.key === "ArrowLeft" ? (i + VIEWS.length - 1) % VIEWS.length : e.key === "Home" ? 0 : e.key === "End" ? VIEWS.length - 1 : -1;
+  if (next < 0) return;
+  e.preventDefault();
+  setView(VIEWS[next]!);
+  $(`tab-${VIEWS[next]}`).focus();
+});
+// Enter in From or To picks from the list; the form itself never submits
+document.querySelector("form.picker")?.addEventListener("submit", (e) => e.preventDefault());
 strip.configure({
   ...(STRIP_ZOOMS.some((z) => String(z) === params.get("km")) ? { zoom: Number(params.get("km")) } : {}),
   aheadUp: params.get("ahead") !== "down",
