@@ -61,6 +61,19 @@ describe("RoutingGraph", () => {
     expect(r.steps.map((s) => s.startDistance)).toEqual([0, 70, 1070]);
   });
 
+  it("follows one-way relations (navigability AB / BA) in their direction only", () => {
+    const oneWay = (direction: "AB" | "BA"): Topology => ({
+      netElements: [{ id: "P", length: 100 }, { id: "Q", length: 100 }],
+      netRelations: [{ ...rel("P", false, "Q", true), direction }],
+    });
+    const ab = new RoutingGraph(oneWay("AB"));
+    expect(ab.route(point("P", 50), point("Q", 50))?.steps.map((s) => s.ne)).toEqual(["P", "Q"]);
+    expect(ab.route(point("Q", 50), point("P", 50))).toBeNull();
+    const ba = new RoutingGraph(oneWay("BA"));
+    expect(ba.route(point("P", 50), point("Q", 50))).toBeNull();
+    expect(ba.route(point("Q", 50), point("P", 50))?.steps.map((s) => s.ne)).toEqual(["Q", "P"]);
+  });
+
   it("does not U-turn through a switch (navigability None)", () => {
     // B -> C would need a reversal at the A/B/C switch or the B/C/D switch
     expect(g.route(point("B", 500), point("C", 400))).toBeNull();
