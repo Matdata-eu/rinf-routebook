@@ -1,12 +1,14 @@
+/** Letters that Unicode does not decompose into a base letter and a mark. */
+const FOLD: Record<string, string> = { ø: "o", æ: "ae", œ: "oe", ß: "ss", ł: "l", đ: "d", ð: "d", þ: "th", ı: "i", ħ: "h", ŧ: "t" };
+
 /**
- * Lowercase, strip diacritics and fold Nordic letters so that "lillestrom"
- * finds "Lillestrøm" and "asker" finds "Åsker".
+ * Lowercase, strip diacritics and fold the letters that have no decomposition, so that
+ * "lillestrom" finds "Lillestrøm", "asker" finds "Åsker", "lodz" finds "Łódź" and "strasse" "Straße".
  */
 export function normalizeName(s: string): string {
   return s
     .toLowerCase()
-    .replace(/ø/g, "o")
-    .replace(/æ/g, "ae")
+    .replace(/[øæœßłđðþıħŧ]/g, (c) => FOLD[c]!)
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
