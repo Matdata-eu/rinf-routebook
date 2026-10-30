@@ -67,6 +67,8 @@ Options:
   --minutes <n>             Minutes between two checks (sync; default ROUTEBOOK_SYNC_MINUTES or 60)
   --once                    One check and the fetches it calls for, then exit (sync)
   --force                   Fetch every dataset, changed or not (sync)
+  --keep-snapshots          Also write the full snapshot of each dataset (sync; default
+                            ROUTEBOOK_KEEP_SNAPSHOTS). Only the CLI's route, stats and bundle use them
   --data <dir>              Data folder (default ./data, or ROUTEBOOK_DATA_DIR)
   --snapshot <dir>          Snapshot directory (default <data>/snapshots/<dataset>)
   --endpoint <url>          SPARQL endpoint (default ${DEFAULT_ENDPOINT}, or ROUTEBOOK_SPARQL_ENDPOINT)
@@ -103,6 +105,7 @@ async function main() {
       minutes: { type: "string" },
       threshold: { type: "string" },
       once: { type: "boolean", default: false },
+      "keep-snapshots": { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       data: { type: "string" },
       snapshot: { type: "string" },
@@ -159,8 +162,12 @@ async function main() {
     return;
   }
 
-  /** Fetch one dataset and write its snapshot, web bundle and the dataset index. */
-  const fetchDataset = async (dataset: CountryGraph, snapshotDir = join(dataRoot, "snapshots", folder(dataset.code))) => {
+  /**
+   * Fetch one dataset and write its web bundle, the dataset index and (unless `snapshotDir` is
+   * false) its snapshot. `networkIndex: false` leaves the merged network index to the caller,
+   * which rebuilds it once for a batch of datasets.
+   */
+  const fetchDataset = async (dataset: CountryGraph, snapshotDir: string | false = join(dataRoot, "snapshots", folder(dataset.code)), opts: { networkIndex?: boolean } = {}) => {
     const out = join(webRoot, folder(dataset.code));
     const graphs = graphsOf(dataset);
     const client = new SparqlClient({ graph: graphs[0]!, graphs, ...(endpoint ? { endpoint } : {}) });
@@ -176,12 +183,12 @@ async function main() {
         provenance,
         onWarning: (message) => console.error(`  warning: ${message}`),
       });
-      await saveSnapshot(snapshotDir, snapshot);
+      if (snapshotDir) await saveSnapshot(snapshotDir, snapshot);
       await saveWebBundle(out, snapshot, webExtras(snapshot));
-      await writeDatasetIndex(webRoot, { checkedAt: new Date().toISOString(), endpoint: client.endpoint });
+      await writeDatasetIndex(webRoot, { checkedAt: new Date().toISOString(), endpoint: client.endpoint, ...(opts.networkIndex === false ? { networkIndex: false } : {}) });
       const seconds = (Date.now() - t0) / 1000;
       const published = snapshot.meta.provenance?.map((g) => g.publishedAt?.slice(0, 10)).filter(Boolean);
-      console.error(`Saved to ${snapshotDir} and ${out} in ${seconds.toFixed(0)} s${published?.length ? ` (ERA publication ${[...new Set(published)].join(", ")})` : ""}`);
+      console.error(`Saved to ${snapshotDir ? `${snapshotDir} and ` : ""}${out} in ${seconds.toFixed(0)} s${published?.length ? ` (ERA publication ${[...new Set(published)].join(", ")})` : ""}`);
       return { snapshot, seconds };
     } catch (e) {
       // the previous bundle, if any, stays; the catalogue records the failure
@@ -190,6 +197,7 @@ async function main() {
         failures: [{ id: folder(dataset.code), name: dataset.name, ...(dataset.imName ? { imName: dataset.imName } : {}), error, graphs }],
         checkedAt: new Date().toISOString(),
         endpoint: client.endpoint,
+        networkIndex: false,
       }).catch(() => undefined);
       throw e;
     }
@@ -221,7 +229,8 @@ async function main() {
       // one retry: the endpoint occasionally times out or drops a long query
       for (let attempt = 1; ; attempt++) {
         try {
-          const { snapshot, seconds } = await fetchDataset(dataset);
+          // the network index is rebuilt once, after the last dataset
+          const { snapshot, seconds } = await fetchDataset(dataset, undefined, { networkIndex: false });
           results.push({ dataset, ops: snapshot.meta.counts.ops, seconds });
           break;
         } catch (e) {
@@ -286,8 +295,10 @@ async function main() {
       }
       return { datasets, all: false };
     };
+    // the server only needs the web bundles; the full snapshots (as large again) only on request
+    const keepSnapshots = values["keep-snapshots"] || ["1", "true", "yes"].includes((process.env.ROUTEBOOK_KEEP_SNAPSHOTS ?? "").toLowerCase());
     const fetchOne = async (item: SyncItem) => {
-      const { snapshot } = await fetchDataset(item.dataset);
+      const { snapshot } = await fetchDataset(item.dataset, keepSnapshots ? undefined : false, { networkIndex: false });
       return { ops: snapshot.meta.counts.ops };
     };
     log(`Keeping ${wanted || "the datasets in the catalogue"} current from ${lookup.endpoint}${values.once ? " (one pass)" : `, checking every ${minutes} min`}`);
