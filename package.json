@@ -24,6 +24,7 @@
     "route": "pnpm --filter @routebook/cli start route",
     "dev:web": "pnpm --filter @routebook/web dev",
     "screenshots": "node scripts/screenshots.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "demo": "pnpm build && node scripts/demo.mjs",
     "serve": "node scripts/demo.mjs"
   },
