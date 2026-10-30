@@ -54,9 +54,9 @@ const parseKey = (k: StateKey): [string, Side] => {
 /**
  * Routing graph on the micro topology. A state is "standing at one end of an
  * element". Travelling along an element costs its length times the cost
- * factor; a navigable NetRelation (navigability Both) connects element ends at
- * zero cost. Relations with navigability None (switch leg-to-leg) are skipped,
- * which prevents U-turns through switches.
+ * factor; a navigable NetRelation connects element ends at zero cost, both
+ * ways (navigability Both) or one way (AB, BA). Relations with navigability
+ * None (switch leg-to-leg) are skipped, which prevents U-turns through switches.
  */
 export class RoutingGraph {
   readonly lengths = new Map<string, number>();
@@ -68,8 +68,8 @@ export class RoutingGraph {
       if (!r.navigable || !this.lengths.has(r.a) || !this.lengths.has(r.b)) continue;
       const sa: Side = r.aAtOrigin ? 0 : 1;
       const sb: Side = r.bAtOrigin ? 0 : 1;
-      this.link(key(r.a, sa), [r.b, sb]);
-      this.link(key(r.b, sb), [r.a, sa]);
+      if (r.direction !== "BA") this.link(key(r.a, sa), [r.b, sb]);
+      if (r.direction !== "AB") this.link(key(r.b, sb), [r.a, sa]);
     }
   }
 

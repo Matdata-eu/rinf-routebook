@@ -5,6 +5,7 @@ import type {
   Direction,
   FeatureKind,
   KmPosition,
+  NetRelation,
   OperationalPoint,
   PointFeature,
   Separation,
@@ -176,9 +177,18 @@ export function raisedPantographsText(number?: string, distance?: string, speed?
  * to be fetched again (the sync does that by itself). 2: OP and SoL geometry also read from the
  * net reference, WKT axis order, signs and exponents normalised. 3: section parameters per track
  * (energy, train protection, radio, gauge), their not-applicable / not-yet-available statements and
- * phase and system separations.
+ * phase and system separations. 4: net relations navigable one way only (AB, BA), which were
+ * dropped before.
  */
-export const FETCH_VERSION = 3;
+export const FETCH_VERSION = 4;
+
+/** A relation's era:navigability (…/Both, …/AB, …/BA, …/None): navigable, and in which direction only. */
+export function navigability(nav: string | undefined): Pick<NetRelation, "navigable" | "direction"> {
+  const v = nav?.slice(nav.lastIndexOf("/") + 1);
+  if (v === "Both") return { navigable: true };
+  if (v === "AB" || v === "BA") return { navigable: true, direction: v };
+  return { navigable: false };
+}
 
 /**
  * What decides whether Routebook can work on a dataset (see the web app's Datasets dialog):
@@ -271,7 +281,7 @@ export function assembleSnapshot(
       b: row.b!,
       aAtOrigin: row.oa === "true",
       bAtOrigin: row.ob === "true",
-      navigable: !!row.nav?.endsWith("/Both"),
+      ...navigability(row.nav),
     }));
 
   const tracks = new Map<string, Track>();
