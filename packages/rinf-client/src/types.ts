@@ -68,6 +68,8 @@ export interface NetRelation {
   bAtOrigin: boolean;
   /** false for navigability None (e.g. switch leg-to-leg). */
   navigable: boolean;
+  /** Navigability AB or BA: travel only from A to B, or only from B to A. Absent: both ways (Both). */
+  direction?: "AB" | "BA";
 }
 
 export interface Topology {

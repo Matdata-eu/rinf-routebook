@@ -70,7 +70,7 @@ pnpm dev:web                                # http://127.0.0.1:5173
 ## How routing works
 
 1. **Snapshot:** `routebook fetch` runs a fixed set of SPARQL queries ([packages/rinf-client/queries](packages/rinf-client/queries)) against the dataset's named graphs. The results are stored as JSON: a full snapshot for the CLI, plus a compact web bundle for the browser.
-2. **Graph:** each micro `era:LinearElement` is an edge with its length. `era:NetRelation`s with navigability `Both` connect element ends. Relations with navigability `None` (switch leg to leg) are skipped, so a route never reverses through a switch.
+2. **Graph:** each micro `era:LinearElement` is an edge with its length. `era:NetRelation`s with navigability `Both` connect element ends (`AB` and `BA` one way only). Relations with navigability `None` (switch leg to leg) are skipped, so a route never reverses through a switch.
 3. **Endpoints:** an OP is placed on the topology through its `NetPointReference` (centre point). If it has none, the `NetAreaReference` (station area) is used.
 4. **Shortest path:** Dijkstra with a pluggable cost model. The default prefers running tracks over sidings.
 5. **Routebook:** features referenced on the traversed elements are placed by distance along the route. Signals are filtered by direction of travel. Tunnels are placed from their area coverage. Speed and gradient come from the running track. Each item is flagged as `rinf`, `derived`, `approximate` or `missing`.

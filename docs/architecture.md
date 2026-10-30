@@ -36,7 +36,7 @@ The dependency direction is strictly downwards. `rinf-client` holds the shared s
 
 ### routing
 
-- A state is "at end X of element E". Moving along an element costs `metres × factor(element)`. Only `NetRelation`s with navigability `Both` are followed, so a route never U-turns through a switch.
+- A state is "at end X of element E". Moving along an element costs `metres × factor(element)`. `NetRelation`s with navigability `Both` are followed both ways and those with `AB` or `BA` only in their direction; `None` is skipped, so a route never U-turns through a switch.
 - Endpoints are lists of intervals on elements. `opEndpoint` uses the OP centre points (`NetPointReference`) when they exist and falls back to the OP area (`NetAreaReference`).
 - `CostModel` is an interface. The default is `trackPreferenceCostModel`: running track ×1, siding ×5, unknown ×1.5. `lengthCostModel` uses pure distance.
 - The logic is ported from `docs/queries/route_test.py` and gives the same results for Oslo S–Lillestrøm and Oslo S–Drammen.
