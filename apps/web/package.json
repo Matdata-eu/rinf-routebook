@@ -18,7 +18,7 @@
     "@routebook/routebook": "workspace:*",
     "@routebook/routing": "workspace:*",
     "@routebook/schematic": "workspace:*",
-    "highs": "^1.15.3",
+    "highs": "^1.15.4",
     "maplibre-gl": "^5.24.0",
     "pmtiles": "^4.5.0"
   },
