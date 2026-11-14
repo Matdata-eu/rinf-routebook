@@ -187,7 +187,7 @@ export interface LayoutOptions {
   /**
    * How far (m) lane 0 is continued beyond the origin and the destination, along the track the route
    * runs on: to the limit of that operational point when `ops` are given, at most this far (default
-   * 2500; 600 without `ops`). 0 = the drawing's baseline ends with the route.
+   * 800; 600 without `ops`). 0 = the drawing's baseline ends with the route.
    */
   baseline?: number;
 }
@@ -422,7 +422,7 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
   const first = route.steps[0];
   const p0 = first ? net.endPoint({ ne: first.ne, end: 0 }) : undefined;
   const frame = new LocalFrame(p0?.[1] ?? 60);
-  const rl = routeLine(route, net, frame);
+  let rl = routeLine(route, net, frame);
 
   const leads = new Map<string, XY>();
   /** direction of the first metres of track from an end */
@@ -501,7 +501,7 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
   // on, to the limit of the station there, so that its other tracks have a route node behind and ahead
   const baseline: Explored["baseline"] = [];
   const last = route.steps.at(-1);
-  const baseLimit = opts.baseline ?? (opsOf.size ? 2500 : 600);
+  const baseLimit = opts.baseline ?? (opsOf.size ? 800 : 600);
   if (first && last && baseLimit > 0) {
     /** the end that continues end `r` straight through node `n` */
     const through = (n: number, r: EndRef): EndRef | undefined => {
@@ -558,6 +558,22 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
         x = xFar;
         n = m;
       }
+    }
+    // the line the other tracks are measured against runs on along the baseline, so that the tracks beyond
+    // the ends of the route are placed by their distance from it like any others
+    if (baseline.length) {
+      const whole = (ne: string, entry: EndRef, x: number): Route["steps"][number] => {
+        const len = net.lengths.get(ne) ?? 0;
+        const forward = entry.end === 0;
+        return { ne, forward, from: forward ? 0 : len, to: forward ? len : 0, startDistance: x };
+      };
+      const steps = route.steps.map((st) => ({ ...st }));
+      // the first and the last element of the route in full
+      steps[0] = { ...steps[0]!, from: first.forward ? 0 : firstLen, startDistance: xFirst };
+      steps[steps.length - 1] = { ...steps.at(-1)!, to: last.forward ? lastLen : 0 };
+      baseline.forEach((b, i) => steps.push(whole(b.ne, b.entry, tracks[route.steps.length + i]!.from.x)));
+      steps.sort((p, q) => p.startDistance - q.startDistance);
+      rl = routeLine({ ...route, steps }, net, frame);
     }
   }
 
