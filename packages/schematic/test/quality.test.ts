@@ -3,7 +3,7 @@ import { layoutQuality, layoutRouteSchematic, loadHighs, prepareSolvedLayout, so
 import { FIXTURES, loadFixture } from "./fixtures.js";
 
 /**
- * The quality gate of the layouter: the solver layout of six station areas cut out of real RINF data
+ * The quality gate of the layouter: the solver layout of seven station areas cut out of real RINF data
  * (test/fixtures, written by `node scripts/schematic-lab.mjs fixture`) must stay within the numbers
  * below. They are what the layouter reaches today plus a little room; when a change makes a layout
  * better, tighten them, and when one must give way, say why in the commit.
@@ -18,7 +18,28 @@ const LIMITS: Record<(typeof FIXTURES)[number], Limits> = {
   trondheim: { crossings: 1, overlaps: 0, bends: 64, squeezed: 1, steep: 0, lanes: 33 },
   dalane: { crossings: 1, overlaps: 0, bends: 38, squeezed: 1, steep: 0, lanes: 24 },
   radviliskis: { crossings: 12, overlaps: 0, bends: 128, squeezed: 4, steep: 0, lanes: 41 },
+  kongsvinger: { crossings: 1, overlaps: 0, bends: 41, squeezed: 1, steep: 0, lanes: 18 },
 };
+
+/**
+ * Checked against Bane NOR's published station track plans (banenor.no, "Railway stations"): which side
+ * of the route a track lies on.
+ */
+describe("sides as in Bane NOR's station plans", () => {
+  it("Hamar: the tracks through slip switch 39 both lie on the station side of track 1", async () => {
+    // plan KO-000078-000: north of switch 8 the route (track 1) takes the curve of slip 39; the track
+    // from 5 and the one on to X200 and track 28 (1002 in RINF) are both left of it, none crosses below
+    const { route, input } = loadFixture("hamar");
+    const highs = await loadHighs();
+    const prep = prepareSolvedLayout(route, input, { timeLimit: 60 });
+    for (const s of [layoutRouteSchematic(route, input), prep.finish(prep.problems.map((p) => solveWithHighs(highs, p)))]) {
+      const t1002 = s.tracks.filter((t) => t.track === "1002");
+      expect(t1002.length).toBeGreaterThan(0);
+      for (const t of t1002) expect(Math.min(t.from.y, t.to.y, t.lane ?? 0)).toBeGreaterThanOrEqual(0);
+    }
+    expect(prep.reports.reduce((n, w) => n + w.conflicts, 0)).toBe(0);
+  }, 120_000);
+});
 
 describe("layout quality on real stations", () => {
   let highs: HighsLike;

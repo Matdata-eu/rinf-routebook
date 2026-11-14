@@ -18,7 +18,7 @@ interface FixtureFile {
   geometry: NonNullable<Snapshot["geometry"]>;
 }
 
-export const FIXTURES = ["hamar", "skoyen", "drammen", "trondheim", "dalane", "radviliskis"] as const;
+export const FIXTURES = ["hamar", "skoyen", "drammen", "trondheim", "dalane", "radviliskis", "kongsvinger"] as const;
 
 export interface StationFixture {
   route: Route;
