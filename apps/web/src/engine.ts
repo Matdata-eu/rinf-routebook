@@ -10,6 +10,7 @@ import {
   layoutRouteSchematic,
   prepareSolvedLayout,
   type CompactSwitch,
+  type LpSolution,
   type LpSolver,
   type Schematic,
   type SwitchInfo,
@@ -138,13 +139,22 @@ export class RouteEngine {
   /**
    * Both schematic layouts: the heuristic one at once, and a promise of the
    * solver layout (its window models solved by `solver`, e.g. HiGHS in a Web
-   * Worker). The promise falls back to the heuristic layout when solving fails.
+   * Worker). `onUpdate` is called each time one more window is solved, with a
+   * function that builds the layout from the windows solved so far; a window
+   * without a solution keeps the heuristic layout (`Schematic.windows` says which).
    */
-  schematics(result: RouteResult, solver: LpSolver): { heuristic: Schematic; solved: Promise<Schematic> } {
+  schematics(result: RouteResult, solver: LpSolver, onUpdate?: (partial: () => Schematic, done: number, total: number) => void): { heuristic: Schematic; solved: Promise<Schematic> } {
     const prep = prepareSolvedLayout(result.routebook.route, { ...this.schematicInput(), tracks: this.snapshot.tracks, ops: this.snapshot.ops });
-    const solved = prep.problems.length
-      ? solver(prep.problems).then(prep.finish, () => prep.heuristic)
-      : Promise.resolve(prep.heuristic);
+    if (!prep.problems.length) return { heuristic: prep.heuristic, solved: Promise.resolve(prep.heuristic) };
+    const sofar: Array<LpSolution | null> = prep.problems.map(() => null);
+    const solved = solver(prep.problems, (index, solution) => {
+      sofar[index] = solution;
+      const left = sofar.filter((x) => x === null).length;
+      if (onUpdate && left) onUpdate(() => prep.finish(sofar), sofar.length - left, sofar.length);
+    }).then(
+      (solutions) => prep.finish(solutions),
+      () => prep.finish(prep.problems.map(() => undefined)),
+    );
     return { heuristic: prep.heuristic, solved };
   }
 

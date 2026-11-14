@@ -116,3 +116,83 @@ export function layoutMetrics(s: Schematic, diagonal = 40, onCrossing?: (a: Sche
   }
   return { crossings, overlaps, bends };
 }
+
+export interface QualityMetrics extends LayoutMetrics {
+  minLane: number;
+  maxLane: number;
+  /**
+   * Height the drawing spends beyond need: over every x and side of the route, the outermost lane in
+   * use minus the number of tracks that lie side by side there. 0 = as compact as the tracks allow.
+   */
+  excessLanes: number;
+  /** off-route elements of more than 50 m drawn at under a quarter of their length */
+  squeezed: number;
+  /** off-route elements drawn at over three times their length (at least 60 m of drawing) */
+  stretched: number;
+  /** elements with less horizontal room than `diagonal` metres per lane they change (or their own length) */
+  steep: number;
+  /** elements drawn as two half stubs (a wye, or a loop back to the same node) */
+  split: number;
+}
+
+/**
+ * The quality numbers of a layout: what `layoutMetrics` counts, plus how tall it is against the tracks
+ * it has to show and how far the drawn lengths are from the real ones (`lengthOf`: metres per element).
+ */
+export function layoutQuality(s: Schematic, lengthOf: (ne: string) => number | undefined, diagonal = 40): QualityMetrics {
+  const base = layoutMetrics(s, diagonal);
+  let squeezed = 0, stretched = 0, steep = 0;
+  const halves = new Map<string, number>();
+  type Span = { lo: number; hi: number; side: number; reach: (x: number) => number };
+  const spans: Span[] = [];
+  for (const t of s.tracks) {
+    if (t.onRoute) continue;
+    const w = Math.abs(t.to.x - t.from.x);
+    if (t.stub && t.lane === null) halves.set(t.ne, (halves.get(t.ne) ?? 0) + 1);
+    if (!t.stub) {
+      const len = lengthOf(t.ne) ?? 0;
+      if (len > 50 && w < 0.25 * len) squeezed++;
+      if (w > 3 * Math.max(20, len)) stretched++;
+      const d = t.lane === null ? Math.abs(t.to.y - t.from.y) : Math.abs(t.from.y - t.lane) + Math.abs(t.to.y - t.lane);
+      if (d > 0 && w < Math.min(len, diagonal * d) - 1) steep++;
+    }
+    const runs = t.runs ?? (t.lane === null ? [] : [{ from: t.from.x, to: t.to.x, y: t.lane }]);
+    const side = Math.sign(t.lane ?? 0) || Math.sign(t.from.y) || Math.sign(t.to.y);
+    if (!side || w < 1) continue;
+    const lo = Math.min(t.from.x, t.to.x), hi = Math.max(t.from.x, t.to.x);
+    const ends = Math.max(Math.abs(t.from.y), Math.abs(t.to.y));
+    spans.push({
+      lo,
+      hi,
+      side,
+      reach: (x) => {
+        for (const r of runs) if (Math.min(r.from, r.to) <= x && x <= Math.max(r.from, r.to)) return Math.abs(r.y);
+        return ends;
+      },
+    });
+  }
+  let excessLanes = 0;
+  for (const side of [1, -1]) {
+    const list = spans.filter((p) => p.side === side).sort((a, b) => a.lo - b.lo);
+    const active: Span[] = [];
+    for (const cur of list) {
+      for (let i = active.length - 1; i >= 0; i--) if (active[i]!.hi <= cur.lo) active.splice(i, 1);
+      active.push(cur);
+      // just inside the start of the newest span: every active span covers this x
+      const x = cur.lo + Math.min(0.5, (cur.hi - cur.lo) / 2);
+      let used = 0;
+      for (const a of active) used = Math.max(used, a.reach(x));
+      excessLanes = Math.max(excessLanes, used - active.length);
+    }
+  }
+  return {
+    ...base,
+    minLane: s.minLane,
+    maxLane: s.maxLane,
+    excessLanes,
+    squeezed,
+    stretched,
+    steep,
+    split: [...halves.values()].filter((n) => n >= 2).length,
+  };
+}

@@ -1,7 +1,7 @@
 import type { Route } from "@routebook/routing";
 import { MinHeap } from "@routebook/routing";
 import { endKey, otherEnd, type EndRef } from "./network.js";
-import { emitSchematic, layoutCore, type Explored, type LayoutInput, type LayoutOptions, type Schematic, type SchematicPoint, type SchematicTrack } from "./layout.js";
+import { emitSchematic, layoutCore, type LayoutInput, type LayoutOptions, type Schematic, type SchematicPoint, type SchematicTrack, type SchematicWindow } from "./layout.js";
 import { Lin, LpModel } from "./lp.js";
 
 /**
@@ -42,9 +42,13 @@ import { Lin, LpModel } from "./lp.js";
 export interface SolvedLayoutOptions extends LayoutOptions {
   /** Solves the window models (default: HiGHS in this thread). */
   solver?: LpSolver;
-  /** Seconds per window (default 0.5). */
+  /**
+   * Seconds per window. Default: by the size of the window's model (`windowBudget`: 2 s for a small
+   * station, up to 10 s for the largest), so that every window is normally solved to the end and the
+   * layout does not depend on how fast the machine is.
+   */
   timeLimit?: number;
-  /** Open line (m) without nodes where the route is cut into windows (default 300). */
+  /** Open line (m) without nodes where the route is cut into windows (default 1000). */
   cutGap?: number;
   /** Diagnostics per window. */
   onWindow?: (w: WindowReport) => void;
@@ -56,23 +60,29 @@ export interface LpProblem {
   timeLimit: number;
 }
 
-/** Primal values by variable name; undefined = no solution (infeasible, error, or time out without one). */
+/**
+ * Primal values by variable name; undefined = no solution (infeasible, error, or time out without one).
+ * `LIMITED` is set (to 1) when the solver stopped at the time limit: the values are then the best
+ * layout found so far, not a proven optimum.
+ */
 export type LpSolution = Record<string, number> | undefined;
 
-/** Solves a batch of independent LP-format models. */
-export type LpSolver = (problems: LpProblem[]) => Promise<LpSolution[]>;
+/** Key in an LpSolution that marks a solution cut short by the time limit. */
+export const LIMITED = "$limited";
 
-export interface WindowReport {
-  from: number;
-  to: number;
-  nodes: number;
-  pieces: number;
-  vars: number;
-  rows: number;
-  status: "solved" | "order-conflict" | "infeasible-x" | "no-solution";
-  /** pairs of edges whose vertical order contradicted the topology (they may cross) */
-  conflicts: number;
+/**
+ * Solves a batch of independent LP-format models. `onSolution` is called as each one is done (in any
+ * order), so that the caller can draw the windows solved so far.
+ */
+export type LpSolver = (problems: LpProblem[], onSolution?: (index: number, solution: LpSolution) => void) => Promise<LpSolution[]>;
+
+/** Seconds a window of this size gets by default. */
+export function windowBudget(vars: number): number {
+  return Math.min(10, Math.max(2, 1 + vars / 300));
 }
+
+/** How one window was laid out (the same record as `Schematic.windows`). */
+export type WindowReport = SchematicWindow;
 
 /** One element (or route element) as an edge between two nodes, left to right in x. */
 interface GEdge {
@@ -151,7 +161,6 @@ export async function layoutRouteSchematicSolved(route: Route, input: LayoutInpu
 export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: SolvedLayoutOptions = {}) {
   const core = layoutCore(route, input, opts);
   const { ex, byElem, laid } = core;
-  const timeLimit = opts.timeLimit ?? 0.5;
   const cutGap = opts.cutGap ?? 1000;
   const Y = 2 * (Number.isFinite(ex.maxLanes) ? ex.maxLanes : Math.max(-core.schematic.minLane, core.schematic.maxLane, 1)) + 4;
   const M = 2 * Y + 2;
@@ -317,7 +326,7 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     if (!order) return report("order-conflict");
     const model = buildModel(w, k, order);
     if (!model) return report("infeasible-x");
-    problems.push({ k, model, report: report("solved", model.size) });
+    problems.push({ k, model, report: report("pending", model.size) });
   });
 
   function buildModel(w: Window, k: number, order: NonNullable<ReturnType<typeof edgeOrder>>): LpModel | undefined {
@@ -505,14 +514,24 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     return m;
   }
 
-  const finish = (solutions: LpSolution[]): Schematic => {
+  /**
+   * The schematic for the solutions so far: one entry per problem, `null` (or missing) for a window
+   * that is not solved yet, `undefined` for one without a solution. Can be called again as more arrive.
+   */
+  const finish = (solutions: ReadonlyArray<LpSolution | null>): Schematic => {
     const solved = new Map<number, Record<string, number>>();
+    let pending = false;
     problems.forEach(({ k, report }, i) => {
-      const sol = solutions[i];
-      if (sol) solved.set(k, sol);
-      else report.status = "no-solution";
+      const sol = i < solutions.length ? solutions[i] : null;
+      if (sol) {
+        solved.set(k, sol);
+        report.status = sol[LIMITED] ? "time-limit" : "solved";
+      } else {
+        report.status = sol === null ? "pending" : "no-solution";
+        if (sol === null) pending = true;
+      }
     });
-    for (const r of reports) opts.onWindow?.(r);
+    if (!pending) for (const r of reports) opts.onWindow?.(r);
     const hp = core.points;
     const points = new Map<number, SchematicPoint>();
     const point = (n: number): SchematicPoint => {
@@ -581,10 +600,17 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
       const longest = merged.reduce((p, q) => (Math.abs(q.to - q.from) > Math.abs(p.to - p.from) ? q : p));
       return merged.length > 1 ? { lane: longest.y, runs: merged } : { lane: longest.y };
     };
-    return emitSchematic(ex, { point, track, laid }).schematic;
+    const schematic = emitSchematic(ex, { point, track, laid }).schematic;
+    schematic.windows = reports.map((r) => ({ ...r }));
+    return schematic;
   };
 
-  return { heuristic: core.schematic, problems: problems.map(({ model }) => ({ lp: model.toString(), timeLimit })), finish, reports };
+  return {
+    heuristic: core.schematic,
+    problems: problems.map(({ model }) => ({ lp: model.toString(), timeLimit: opts.timeLimit ?? windowBudget(model.size.vars) })),
+    finish,
+    reports,
+  };
 }
 
 const round = (x: number) => Math.round(x * 100) / 100;

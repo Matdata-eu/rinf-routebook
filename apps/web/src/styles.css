@@ -261,6 +261,9 @@ a:hover { color: var(--brand-strong); }
 .lg-siding { border-top: 2px dashed var(--line-strong); }
 .lg-switch { width: 9px; height: 9px; border: 2px solid var(--ink); border-radius: 50%; background: var(--surface-raised); }
 .sch-scroll { flex: 1; overflow: auto; min-height: 0; }
+.sch-status { font-size: 13px; color: var(--ink-muted); }
+.sch-status:empty { display: none; }
+.schematic:has(.sch-scroll[data-layout="partial"]) .sch-status { color: var(--amber-ink); font-weight: 600; cursor: help; }
 .sch-empty { padding: var(--space-6); color: var(--ink-muted); max-width: 68ch; line-height: 26px; }
 .sch-svg { display: block; cursor: crosshair; font-family: var(--font-sans); }
 .sch-track { fill: none; stroke: var(--ink-muted); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }

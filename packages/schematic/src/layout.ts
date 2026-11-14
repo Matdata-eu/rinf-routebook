@@ -78,6 +78,31 @@ export interface Schematic {
   omitted?: number;
   minLane: number;
   maxLane: number;
+  /**
+   * Solver layout only: the windows the route was cut into and how each was laid out (a window that is
+   * not `solved` shows the heuristic layout, or the solver's best one at its time limit).
+   */
+  windows?: SchematicWindow[];
+}
+
+/** One window (station area) of the solver layout. */
+export interface SchematicWindow {
+  /** x range (route metres) */
+  from: number;
+  to: number;
+  nodes: number;
+  pieces: number;
+  vars: number;
+  rows: number;
+  /**
+   * solved: laid out by the solver; time-limit: by the solver, with the best layout it had when its time
+   * was up; pending: not solved yet (the heuristic layout is shown meanwhile); the others keep the
+   * heuristic layout: order-conflict (the topology gives contradicting vertical orders), infeasible-x
+   * (the route nodes are not in the order of the model), no-solution (the solver found none in time).
+   */
+  status: "solved" | "time-limit" | "pending" | "order-conflict" | "infeasible-x" | "no-solution";
+  /** pairs of edges whose vertical order contradicted the topology (they may cross) */
+  conflicts: number;
 }
 
 export interface LayoutOptions {

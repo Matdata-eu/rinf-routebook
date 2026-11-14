@@ -134,6 +134,8 @@ export interface SchematicView {
   /** Route distance (m) at a horizontal pixel offset in the drawing, and back. */
   distanceAt: (px: number) => number;
   pxAt: (distance: number) => number;
+  /** Vertical pixel offset of the route line in the drawing. */
+  routeY: number;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -453,5 +455,5 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   root.replaceChildren(svg);
   stick();
   moveMarker(opts.selectedDistance);
-  return { moveMarker, distanceAt: (px) => scale.invert(px - PAD), pxAt: (d) => sx(d) };
+  return { moveMarker, distanceAt: (px) => scale.invert(px - PAD), pxAt: (d) => sx(d), routeY: sy(0) };
 }

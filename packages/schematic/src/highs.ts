@@ -1,4 +1,4 @@
-import type { LpProblem, LpSolution, LpSolver } from "./solver.js";
+import { LIMITED, type LpProblem, type LpSolution, type LpSolver } from "./solver.js";
 
 /** The part of the highs-js module this package uses. */
 export interface HighsLike {
@@ -36,6 +36,7 @@ export function solveWithHighs(highs: HighsLike, p: LpProblem): LpSolution {
       if (typeof c.Primal !== "number" || !Number.isFinite(c.Primal)) return undefined;
       out[name] = c.Primal;
     }
+    if (r.Status !== "Optimal") out[LIMITED] = 1;
     return out;
   } catch {
     return undefined;
@@ -44,8 +45,12 @@ export function solveWithHighs(highs: HighsLike, p: LpProblem): LpSolution {
 
 /** An LpSolver that runs HiGHS in this thread. */
 export function highsSolver(opts: HighsLoadOptions = {}): LpSolver {
-  return async (problems) => {
+  return async (problems, onSolution) => {
     const highs = await loadHighs(opts);
-    return problems.map((p) => solveWithHighs(highs, p));
+    return problems.map((p, i) => {
+      const s = solveWithHighs(highs, p);
+      onSolution?.(i, s);
+      return s;
+    });
   };
 }

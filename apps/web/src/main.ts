@@ -795,8 +795,25 @@ function fitRoute(): void {
 // ---------------------------------------------------------------- schematic
 
 const schematicScroll = $("sch-scroll");
+const schematicStatus = $("sch-status");
+
+/** Draw the schematic again with the view where it is: the same route distance and the route line at the same place. */
+function redrawSchematicInPlace(): void {
+  const box = schematicScroll;
+  const old = schematicView;
+  if (!old) return drawSchematic();
+  // keep the route distance at the left edge (or in the middle) of the view where it is
+  const anchorPx = box.scrollLeft > 0 ? box.clientWidth / 2 : 0;
+  const at = old.distanceAt(box.scrollLeft + anchorPx);
+  const above = old.routeY - box.scrollTop;
+  drawSchematic();
+  if (!schematicView) return;
+  box.scrollLeft = schematicView.pxAt(at) - anchorPx;
+  box.scrollTop = schematicView.routeY - above;
+}
 
 function drawSchematic(): void {
+  const first = schematic?.result !== result;
   schematicView = undefined;
   if (view !== "schematic") return;
   if (!result) {
@@ -807,21 +824,47 @@ function drawSchematic(): void {
     return;
   }
   if (schematic?.result !== result) {
-    const { heuristic, solved } = result.engine.schematics(result, solver);
-    const entry = { result, layout: heuristic };
+    solver.cancel();
+    const entry = { result } as { result: RouteResult; layout: Schematic; latest?: () => Schematic };
+    const show = (state: string, text: string, tip = "") => {
+      schematicScroll.dataset.layout = state;
+      schematicStatus.textContent = text;
+      schematicStatus.title = tip;
+    };
+    // the windows are redrawn as they are solved, at most twice a second
+    let timer = 0;
+    const redraw = () => {
+      timer = 0;
+      if (schematic !== entry || !entry.latest) return;
+      entry.layout = entry.latest();
+      delete entry.latest;
+      if (view === "schematic" && schematicView) redrawSchematicInPlace();
+    };
+    const { heuristic, solved } = result.engine.schematics(result, solver, (partial, done, total) => {
+      if (schematic !== entry) return;
+      entry.latest = partial;
+      show("refining", `Refining the layout… ${done} of ${total} station areas`);
+      timer ||= window.setTimeout(redraw, 500);
+    });
+    entry.layout = heuristic;
     schematic = entry;
-    schematicScroll.dataset.layout = "heuristic";
+    show("heuristic", "Refining the layout…", "The quick layout is shown first; each station area is replaced by the solver's layout when it is ready.");
     void solved.then((layout) => {
       if (schematic !== entry) return;
-      entry.layout = layout;
-      schematicScroll.dataset.layout = "solved";
-      if (view !== "schematic" || !schematicView) return;
-      // keep the route distance at the left edge (or in the middle) of the view where it is
-      const box = schematicScroll;
-      const anchorPx = box.scrollLeft > 0 ? box.clientWidth / 2 : 0;
-      const at = schematicView.distanceAt(box.scrollLeft + anchorPx);
-      drawSchematic();
-      if (schematicView) box.scrollLeft = schematicView.pxAt(at) - anchorPx;
+      window.clearTimeout(timer);
+      entry.latest = () => layout;
+      const windows = layout.windows ?? [];
+      const kept = windows.filter((w) => w.status !== "solved" && w.status !== "time-limit");
+      const limited = windows.filter((w) => w.status === "time-limit").length;
+      const km = (w: { from: number; to: number }) => `km ${(Math.max(0, w.from) / 1000).toFixed(1)}`;
+      if (kept.length)
+        show(
+          "partial",
+          `${kept.length} of ${windows.length} station areas keep the quick layout`,
+          `The solver gave no layout for the station areas at ${kept.map(km).join(", ")}; they are drawn with the quick layout, which lets more tracks cross.`,
+        );
+      else show("solved", "", limited ? `${limited} station area(s) show the best layout found within the time limit.` : "");
+      redraw();
     });
   }
   const rb = result.routebook;
@@ -838,6 +881,11 @@ function drawSchematic(): void {
       panel.querySelector(`.rb-row[data-index="${best.index}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
     },
   });
+  // a new route opens with the route line in the middle of the view
+  if (first || schematicScroll.dataset.centred !== "1") {
+    schematicScroll.scrollTop = Math.max(0, schematicView.routeY - schematicScroll.clientHeight / 2);
+    schematicScroll.dataset.centred = schematicScroll.clientHeight > 0 ? "1" : "0";
+  }
 }
 
 function setView(next: View): void {
