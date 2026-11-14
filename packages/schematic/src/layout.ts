@@ -643,9 +643,11 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
       const d = screenOf(n, sw).deviates;
       return endKey(r) === endKey(sw.deviating) ? d : (-d as 1 | -1);
     }
-    const mk = mainOf(n).values().next().value;
-    if (mk === undefined) return 1;
-    const me = parseEndKey(mk);
+    // against the straight track on the same side of the node as the end: where the straight pair bends
+    // at the node (the route taking the curve of a slip), the other leg of the pair says nothing
+    const mains = [...mainOf(n)].map(parseEndKey);
+    const me = mains.find((m) => side(n, m) === side(n, r)) ?? mains[0];
+    if (!me) return 1;
     const u = lead(me), s = side(n, me);
     return sign(cross([u[0] * s, u[1] * s], lead(r)));
   };
