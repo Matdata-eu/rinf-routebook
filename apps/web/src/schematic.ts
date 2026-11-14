@@ -99,13 +99,18 @@ export function trackPath(t: SchematicTrack, sx: (x: number) => number, sy: (y: 
     return [a, [mid - (dir * rise) / 2, a[1]], [mid + (dir * rise) / 2, b[1]], b];
   }
   const runs = (t.runs ?? [{ from: t.from.x, to: t.to.x, y: t.lane }]).map((r) => ({ x0: sx(r.from), x1: sx(r.to), y: sy(r.y), lane: r.y, start: 0, end: 0 }));
+  const zero = sy(0);
   // the diagonals each piece holds: the end diagonals, and a lane change on the side nearer the route
   runs[0]!.start = Math.abs(a[1] - runs[0]!.y);
   runs.at(-1)!.end += Math.abs(b[1] - runs.at(-1)!.y);
   for (let i = 1; i < runs.length; i++) {
     const p = runs[i - 1]!, q = runs[i]!;
     const rise = Math.abs(q.y - p.y);
-    if (Math.abs(q.lane) < Math.abs(p.lane)) q.start += rise;
+    if (p.lane * q.lane < 0) {
+      // across the route (a bridge): each side climbs to the route's lane in its own piece
+      p.end += Math.abs(p.y - zero);
+      q.start += Math.abs(q.y - zero);
+    } else if (Math.abs(q.lane) < Math.abs(p.lane)) q.start += rise;
     else p.end += rise;
   }
   const pts: Array<[number, number]> = [a];
@@ -344,6 +349,13 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     const d = `M${a[0]!.toFixed(1)},${a[1]!.toFixed(1)} C${far.toFixed(1)},${a[1]!.toFixed(1)} ${far.toFixed(1)},${b[1]!.toFixed(1)} ${b[0]!.toFixed(1)},${b[1]!.toFixed(1)}`;
     const arc = el("path", { d, class: `sch-connection${c.kind ? ` kind-${c.kind}` : ""}` }, layer);
     title(arc, `Track ${c.track ?? "?"} joins these two ends (${Math.round(c.length)} m): both ends point the same way along the route, as in a triangle or a loop\n${c.ne}`);
+  }
+
+  // a track over or under the route without a switch: a short gap marker across the route
+  for (const b of s.bridges ?? []) {
+    const g = el("g", { transform: `translate(${sx(b.x).toFixed(1)},${sy(0)})`, class: "sch-bridge" }, layer);
+    el("path", { d: "M-7,-8 L-4,-5 L-4,5 L-7,8 M7,-8 L4,-5 L4,5 L7,8" }, g);
+    title(g, `Track ${b.track ?? "?"} crosses here without a switch (a bridge or a flat crossing, from the track geometry)\n${b.ne}`);
   }
 
   // crossings and slips: both tracks straight through, marked with an X

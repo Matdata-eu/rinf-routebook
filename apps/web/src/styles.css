@@ -280,6 +280,7 @@ a:hover { color: var(--brand-strong); }
 .sch-switch-label.off-route { font-size: 10px; fill-opacity: 0.8; }
 .sch-connection { fill: none; stroke: var(--ink-muted); stroke-width: 1.5; stroke-dasharray: 1.5 4; stroke-linecap: round; }
 .sch-connection:hover { stroke: var(--brand-strong); }
+.sch-bridge path { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; }
 .sch-area { fill: var(--ink); fill-opacity: 0.025; pointer-events: none; }
 .sch-debug { pointer-events: none; }
 .sch-debug-window { fill: none; stroke: var(--brand-strong); stroke-width: 1; stroke-dasharray: 6 4; }
