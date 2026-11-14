@@ -825,7 +825,7 @@ function drawSchematic(): void {
   }
   if (schematic?.result !== result) {
     solver.cancel();
-    const entry = { result } as { result: RouteResult; layout: Schematic; latest?: () => Schematic };
+    const entry = { result } as unknown as { result: RouteResult; layout: Schematic; latest?: () => Schematic };
     const show = (state: string, text: string, tip = "") => {
       schematicScroll.dataset.layout = state;
       schematicStatus.textContent = text;

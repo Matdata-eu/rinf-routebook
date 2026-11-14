@@ -316,6 +316,8 @@ describe("layoutRouteSchematicSolved: a station (railplot model, HiGHS)", () => 
   it("falls back to the heuristic layout when the solver gives no solution", async () => {
     const r = route(true);
     const s = await layoutRouteSchematicSolved(r, { network, switches, tracks: f.tracks }, { solver: async (ps) => ps.map(() => undefined) });
-    expect(s).toEqual(layoutRouteSchematic(r, { network, switches, tracks: f.tracks }));
+    const { windows, ...rest } = s;
+    expect(rest).toEqual(layoutRouteSchematic(r, { network, switches, tracks: f.tracks }));
+    expect(windows?.map((w) => w.status)).toEqual(["no-solution"]);
   });
 });

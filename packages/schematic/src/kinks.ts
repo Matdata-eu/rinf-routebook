@@ -46,7 +46,7 @@ export function addKinks(tracks: SchematicTrack[], opts: KinkOptions = {}): void
     if (v === undefined) pts.set(p, (v = newVar(p.y)));
     return v;
   };
-  const laid = tracks.filter((t) => !t.onRoute && !(t.stub && t.lane === null));
+  const laid = tracks.filter((t) => !t.onRoute && !t.baseline && !(t.stub && t.lane === null));
   for (const t of laid) {
     pointVar(t.from);
     pointVar(t.to);

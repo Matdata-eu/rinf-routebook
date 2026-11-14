@@ -30,6 +30,11 @@ export interface SchematicTrack {
    * diagonal (a crossover between two lanes).
    */
   lane: number | null;
+  /**
+   * The track the route continues on beyond its origin or destination, drawn on lane 0 to the limit of
+   * that station, so that the tracks there are laid out like in any other station.
+   */
+  baseline?: boolean;
   /** The element leaves the corridor here: only its first metres are drawn. */
   stub?: boolean;
   /** For a stub: the next operational point along the track beyond it (where the line goes). */
@@ -83,6 +88,38 @@ export interface Schematic {
    * not `solved` shows the heuristic layout, or the solver's best one at its time limit).
    */
   windows?: SchematicWindow[];
+  /**
+   * Solver layout only, when a station is drawn longer than the route is there: pairs [route distance,
+   * x], ascending, linear in between and continued with slope 1 outside. Without it x is the distance
+   * along the route. Use `schematicX` / `schematicDistance`.
+   */
+  scale?: Array<[distance: number, x: number]>;
+}
+
+/** x in the schematic of a distance along the route. */
+export function schematicX(s: Pick<Schematic, "scale">, distance: number): number {
+  return interpolate(s.scale, distance, 0, 1);
+}
+
+/** Distance along the route of an x in the schematic. */
+export function schematicDistance(s: Pick<Schematic, "scale">, x: number): number {
+  return interpolate(s.scale, x, 1, 0);
+}
+
+function interpolate(scale: Schematic["scale"], v: number, a: 0 | 1, b: 0 | 1): number {
+  if (!scale?.length) return v;
+  const n = scale.length;
+  if (v <= scale[0]![a]) return scale[0]![b] + (v - scale[0]![a]);
+  if (v >= scale[n - 1]![a]) return scale[n - 1]![b] + (v - scale[n - 1]![a]);
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (scale[mid]![a] <= v) lo = mid;
+    else hi = mid;
+  }
+  const [p, q] = [scale[lo]!, scale[hi]!];
+  const span = q[a] - p[a];
+  return span <= 0 ? p[b] : p[b] + ((v - p[a]) * (q[b] - p[b])) / span;
 }
 
 /** One window (station area) of the solver layout. */
@@ -121,6 +158,12 @@ export interface LayoutOptions {
   maxLanes?: number;
   /** Let the tracks next to the route change lane where the topology changes (default true). */
   kinks?: boolean;
+  /**
+   * How far (m) lane 0 is continued beyond the origin and the destination, along the track the route
+   * runs on: to the limit of that operational point when `ops` are given, at most this far (default
+   * 2500; 600 without `ops`). 0 = the drawing's baseline ends with the route.
+   */
+  baseline?: number;
 }
 
 interface RouteLine {
@@ -219,6 +262,8 @@ export interface NodeInfo {
   /** orientation of the node: the x direction an end leaves in is sgn × its group */
   sgn: 1 | -1;
   onRoute: boolean;
+  /** on lane 0 beyond the origin or destination (`onRoute` is set too: the node is fixed there) */
+  baseline?: boolean;
   /** end through which the node was reached */
   arrival?: EndRef;
 }
@@ -284,9 +329,16 @@ export interface Explored {
   ends: (n: number) => EndRef[];
   switchAt: Map<number, SwitchInfo>;
   describe: (ne: string) => { track?: string; kind?: Track["kind"] };
-  /** route elements on lane 0 */
+  /** the elements on lane 0: the route, and the baseline beyond its ends */
   routeTracks: SchematicTrack[];
+  /** per route track: the nodes at its `from` and `to` */
+  routeNodes: Array<[number, number]>;
+  /** elements of the route itself */
   routeNe: Set<string>;
+  /** elements on lane 0 (the route and the baseline) */
+  laneZero: Set<string>;
+  /** the baseline elements beyond the route's ends, each from its end at the lower x to the other */
+  baseline: Array<{ ne: string; entry: EndRef; exit: EndRef }>;
   nodes: Map<number, NodeInfo>;
   /** nodes in the order they were reached (route nodes first) */
   order: number[];
@@ -394,6 +446,7 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
 
   // ---- the route: lane 0
   const tracks: SchematicTrack[] = [];
+  const routeNodes: Array<[number, number]> = [];
   const drawn = new Set<string>();
   const routeEnds = new Map<number, EndRef[]>();
   const order: number[] = [];
@@ -415,6 +468,71 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
     }
     drawn.add(step.ne);
     tracks.push({ ne: step.ne, ...describe(step.ne), onRoute: true, from: { x: xEntry, y: 0 }, to: { x: xExit, y: 0 }, lane: 0 });
+    routeNodes.push([net.nodeOf(entry), net.nodeOf(exit)]);
+  }
+
+  // ---- the baseline: lane 0 continues beyond the origin and the destination on the track the route runs
+  // on, to the limit of the station there, so that its other tracks have a route node behind and ahead
+  const baseline: Explored["baseline"] = [];
+  const last = route.steps.at(-1);
+  const baseLimit = opts.baseline ?? (opsOf.size ? 2500 : 600);
+  if (first && last && baseLimit > 0) {
+    /** the end that continues end `r` straight through node `n` */
+    const through = (n: number, r: EndRef): EndRef | undefined => {
+      const sw = switchAt.get(n);
+      if (sw) return endKey(r) === endKey(sw.common) ? sw.continuous : sw.common;
+      const lr = lead(r);
+      let best: EndRef | undefined;
+      let bestCos = Infinity;
+      for (const e of ends(n)) {
+        if (endKey(e) === endKey(r) || !(net.isNavigable(r, e) || net.isNavigable(e, r))) continue;
+        const le = lead(e);
+        const c = dot(lr, le) / (norm(lr) * norm(le) || 1);
+        if (c < bestCos) {
+          bestCos = c;
+          best = e;
+        }
+      }
+      return best;
+    };
+    const firstEntry: EndRef = { ne: first.ne, end: first.forward ? 0 : 1 };
+    const lastExit: EndRef = { ne: last.ne, end: last.forward ? 1 : 0 };
+    // [the route's outermost end, its x, -1 = towards lower x]
+    const firstLen = net.lengths.get(first.ne) ?? 0;
+    const lastLen = net.lengths.get(last.ne) ?? 0;
+    const xFirst = first.startDistance - (first.forward ? first.from : firstLen - first.from);
+    const xLast = last.startDistance - (last.forward ? last.from : lastLen - last.from) + lastLen;
+    for (const [outer, x0, d] of [[firstEntry, xFirst, -1], [lastExit, xLast, 1]] as const) {
+      const station = new Set(opsOf.get(outer.ne) ?? []);
+      let r: EndRef = outer;
+      let x = x0;
+      let n = net.nodeOf(r);
+      for (let run = 0; run < baseLimit; ) {
+        const near = through(n, r);
+        if (!near || drawn.has(near.ne) || !net.hasGeometry(near.ne)) break;
+        const len = net.lengths.get(near.ne) ?? 0;
+        if (len <= 0 || (opsOf.size && station.size > 0 && !(opsOf.get(near.ne) ?? []).some((o) => station.has(o)))) break;
+        const far = otherEnd(near);
+        const m = net.nodeOf(far);
+        if (nodes.has(m)) break;
+        run += len;
+        const xFar = x + d * len;
+        // the end at the lower x leaves its node towards higher x, like the entry of a route step
+        nodes.set(m, { x: xFar, sgn: (-d * (groups(m).get(endKey(far)) ?? 1)) as 1 | -1, onRoute: true, baseline: true });
+        order.push(m);
+        heap.push(run, m);
+        routeEnds.set(n, [...(routeEnds.get(n) ?? []), near]);
+        routeEnds.set(m, [...(routeEnds.get(m) ?? []), far]);
+        drawn.add(near.ne);
+        const [entry, exit] = d > 0 ? [near, far] : [far, near];
+        baseline.push({ ne: near.ne, entry, exit });
+        tracks.push({ ne: near.ne, ...describe(near.ne), onRoute: false, baseline: true, from: { x: Math.min(x, xFar), y: 0 }, to: { x: Math.max(x, xFar), y: 0 }, lane: 0 });
+        routeNodes.push(d > 0 ? [n, m] : [m, n]);
+        r = far;
+        x = xFar;
+        n = m;
+      }
+    }
   }
 
   // ---- explore outwards from the route, nearest tracks first
@@ -512,20 +630,21 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
     e.diagonal = sigma(e.n, e.a) === -sigma(e.m, otherEnd(e.a));
   }
   const routeNe = new Set(route.steps.map((s) => s.ne));
+  const laneZero = new Set([...routeNe, ...baseline.map((b) => b.ne)]);
   const elemAt = new Map<string, number>();
   elems.forEach((e, i) => {
     elemAt.set(endKey(e.a), i);
     if (e.m !== undefined) elemAt.set(endKey(otherEnd(e.a)), i);
   });
   return {
-    route, net, minRun, maxLanes, stubLength, openLine, ends, switchAt, describe, routeTracks: tracks, routeNe, nodes, order, elems, elemAt,
+    route, net, minRun, maxLanes, stubLength, openLine, ends, switchAt, describe, routeTracks: tracks, routeNodes, routeNe, laneZero, baseline, nodes, order, elems, elemAt,
     mainOf, sigma, side, screenOf, branches,
   };
 }
 
 /** Lanes of the heuristic layout (steps 2 and 3). */
 function heuristicLanes(ex: Explored): { nodeLane: (n: number) => number | undefined; elemLane: (i: number) => number | null | undefined; laid: (n: number) => boolean } {
-  const { nodes, elems, order, ends, mainOf, sigma, branches, routeNe, elemAt, minRun, maxLanes, stubLength, openLine } = ex;
+  const { nodes, elems, order, ends, mainOf, sigma, branches, laneZero, elemAt, minRun, maxLanes, stubLength, openLine } = ex;
   // ---- runs: elements joined by the straight pair of a node share a lane
   const ROUTE = elems.length;
   const parent = Array.from({ length: elems.length + 1 }, (_, i) => i);
@@ -533,7 +652,7 @@ function heuristicLanes(ex: Explored): { nodeLane: (n: number) => number | undef
     while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
     return i;
   };
-  const indexOf = (k: string): number | undefined => (routeNe.has(parseEndKey(k).ne) ? ROUTE : elemAt.get(k));
+  const indexOf = (k: string): number | undefined => (laneZero.has(parseEndKey(k).ne) ? ROUTE : elemAt.get(k));
   // a track that runs on through open line (an element of at least openLine metres) is cut there, so
   // that it can move to another lane between stations; the pieces prefer to keep each other's lane
   const links: Array<[number, number]> = [];
@@ -835,7 +954,11 @@ export interface Placement {
 export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: boolean } = {}): { schematic: Schematic; byElem: Map<number, SchematicTrack> } {
   const { nodes, elems, order, ends, mainOf, sigma, screenOf, switchAt, describe, net, routeNe, route, stubLength, minRun } = ex;
   const { point, laid } = place;
-  const tracks: SchematicTrack[] = ex.routeTracks.map((t) => ({ ...t, from: { ...t.from }, to: { ...t.to } }));
+  // a route element that starts and ends at the same node (a loop) keeps its own x
+  const tracks: SchematicTrack[] = ex.routeTracks.map((t, i) => {
+    const [a, b] = ex.routeNodes[i]!;
+    return a === b ? { ...t, from: { ...t.from }, to: { ...t.to } } : { ...t, from: { x: point(a).x, y: 0 }, to: { x: point(b).x, y: 0 } };
+  });
   const byElem = new Map<number, SchematicTrack>();
   let omitted = 0;
   elems.forEach((e, i) => {
@@ -881,7 +1004,7 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
   const crossings: SchematicCrossing[] = [];
   for (const n of order) {
     const p = point(n);
-    const onR = nodes.get(n)!.onRoute;
+    const onR = nodes.get(n)!.onRoute && !nodes.get(n)!.baseline;
     const sw = switchAt.get(n);
     if (sw) {
       const scr = screenOf(n, sw);

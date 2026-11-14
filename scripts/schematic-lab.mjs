@@ -3,6 +3,7 @@
 // and writes small test fixtures out of it.
 //
 //   node scripts/schematic-lab.mjs measure <dataset> <FROM:TO> [<FROM:TO> ...]
+//   node scripts/schematic-lab.mjs dump <dataset> <FROM:TO> [<from m> <to m>]  the solver layout, a line per track
 //   node scripts/schematic-lab.mjs ops <dataset> <FROM:TO>            operational points along a route
 //   node scripts/schematic-lab.mjs fixture <dataset> <FROM:TO> <name> writes packages/schematic/test/fixtures/<name>.json
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -17,6 +18,8 @@ const { fromWebBundle, expandIris } = await load("@routebook/rinf-client/compact
 const { RoutingGraph, opEndpoint, resolveOp, trackPreferenceCostModel } = await load("@routebook/routing");
 const S = await load("@routebook/schematic");
 
+// LAB_OPTS: solver layout options as JSON, e.g. LAB_OPTS='{"stretch":false}'
+const OPTS = JSON.parse(process.env.LAB_OPTS ?? "{}");
 const [cmd, ds, ...rest] = process.argv.slice(2);
 if (!cmd || !ds) {
   console.error("usage: schematic-lab.mjs measure|ops|fixture <dataset> <FROM:TO> ...");
@@ -56,7 +59,7 @@ if (cmd === "ops") {
     let t = performance.now();
     const h = S.layoutRouteSchematic(r, input);
     const th = performance.now() - t;
-    const prep = S.prepareSolvedLayout(r, input, {});
+    const prep = S.prepareSolvedLayout(r, input, OPTS);
     t = performance.now();
     const sols = prep.problems.map((p) => {
       const s = S.solveWithHighs(highs, p);
@@ -69,6 +72,21 @@ if (cmd === "ops") {
     console.log(`${pair} ${(r.length / 1000).toFixed(0)} km, ${s.tracks.length} tracks; heuristic ${th.toFixed(0)} ms, solve ${ts.toFixed(0)} ms, windows ${JSON.stringify(status)}`);
     console.log(`  heuristic ${fmt(S.layoutQuality(h, lengthOf))}`);
     console.log(`  solver    ${fmt(S.layoutQuality(s, lengthOf))}`);
+  }
+} else if (cmd === "dump") {
+  // the solver layout between two distances (m): one line per track
+  const [pair, d0 = "0", d1 = "Infinity"] = rest;
+  const r = routeOf(pair);
+  const highs = await S.loadHighs();
+  const prep = S.prepareSolvedLayout(r, input, OPTS);
+  const s = prep.finish(prep.problems.map((p) => S.solveWithHighs(highs, p)));
+  const [x0, x1] = [S.schematicX(s, +d0), S.schematicX(s, +d1)];
+  console.log(`x ${x0.toFixed(0)}..${x1.toFixed(0)}; scale ${JSON.stringify((s.scale ?? []).filter(([d]) => d >= +d0 - 500 && d <= +d1 + 500))}`);
+  for (const w of s.windows ?? []) if (w.to >= +d0 && w.from <= +d1) console.log("window", JSON.stringify(w));
+  for (const t of s.tracks) {
+    if (Math.max(t.from.x, t.to.x) < x0 || Math.min(t.from.x, t.to.x) > x1) continue;
+    const runs = t.runs ? " runs " + t.runs.map((q) => `${q.from.toFixed(0)}..${q.to.toFixed(0)}@${q.y}`).join(" ") : "";
+    console.log(`${t.onRoute ? "R" : t.baseline ? "B" : t.stub ? "s" : " "} ${(t.track ?? "").padEnd(8).slice(0, 8)} len ${String(Math.round(lengthOf(t.ne) ?? 0)).padStart(5)}  (${t.from.x.toFixed(0)},${t.from.y}) -> (${t.to.x.toFixed(0)},${t.to.y}) lane ${t.lane}${runs}  ${t.ne.slice(-12)}`);
   }
 } else if (cmd === "fixture") {
   const [pair, name] = rest;
