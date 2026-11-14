@@ -18,12 +18,15 @@ export {
   type SchematicSwitch,
   type SchematicPoint,
   type SchematicCrossing,
+  type SchematicWindow,
   type LayoutOptions,
 } from "./layout.js";
 export { addKinks, type KinkOptions } from "./kinks.js";
 export {
   layoutRouteSchematicSolved,
   prepareSolvedLayout,
+  windowBudget,
+  LIMITED,
   type SolvedLayoutOptions,
   type LpProblem,
   type LpSolution,
@@ -31,4 +34,4 @@ export {
   type WindowReport,
 } from "./solver.js";
 export { loadHighs, solveWithHighs, highsSolver, type HighsLike, type HighsLoadOptions } from "./highs.js";
-export { drawnPolyline, layoutMetrics, type LayoutMetrics } from "./metrics.js";
+export { drawnPolyline, layoutMetrics, layoutQuality, type LayoutMetrics, type QualityMetrics } from "./metrics.js";
