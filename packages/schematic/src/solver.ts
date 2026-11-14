@@ -63,6 +63,11 @@ export interface SolvedLayoutOptions extends LayoutOptions {
    * diagonals (default true). The schematic then carries a `scale` from route distance to x.
    */
   stretch?: boolean;
+  /**
+   * Let a track that crosses the route without a node (a bridge or a flat crossing, found in the
+   * geometry) change side where it does (default true).
+   */
+  bridges?: boolean;
   /** Diagnostics per window. */
   onWindow?: (w: WindowReport) => void;
 }
@@ -192,15 +197,50 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
   const pos = new Map<number, number>();
   for (const [n, info] of ex.nodes) pos.set(n, info.x);
   const edges: GEdge[] = [];
-  for (const step of route.steps) {
-    const entry: EndRef = { ne: step.ne, end: step.forward ? 0 : 1 };
-    const exit = otherEnd(entry);
-    const [a, b] = [ex.net.nodeOf(entry), ex.net.nodeOf(exit)];
-    if (a === b) continue;
-    edges.push({ elem: -1, L: a, R: b, endL: entry, endR: exit, route: true, lat: 0 });
-  }
-  for (const b of ex.baseline) edges.push({ elem: -1, L: ex.net.nodeOf(b.entry), R: ex.net.nodeOf(b.exit), endL: b.entry, endR: b.exit, route: true, lat: 0 });
   let virt = -1;
+  // ---- bridges: where an element crosses the route without a node, a virtual node on the route's lane;
+  // the element is cut there and its two parts leave that node to opposite sides
+  /** bridge node -> the port of each part there */
+  const bridges = new Map<number, { elem: number; ports: Map<EndRef, Port> }>();
+  const bridgeOf = new Map<number, { v: number; x: number; endA: EndRef; endB: EndRef }>();
+  const routeSpans: Array<[number, number]> = [];
+  for (const step of route.steps) routeSpans.push([ex.net.nodeOf({ ne: step.ne, end: step.forward ? 0 : 1 }), ex.net.nodeOf({ ne: step.ne, end: step.forward ? 1 : 0 })]);
+  for (const b of ex.baseline) routeSpans.push([ex.net.nodeOf(b.entry), ex.net.nodeOf(b.exit)]);
+  if (opts.bridges !== false) {
+    ex.elems.forEach((e, i) => {
+      if (!e.cross || e.m === undefined || e.conflict || !byElem.get(i)) return;
+      const [x0, x1] = [Math.min(pos.get(e.n)!, pos.get(e.m)!), Math.max(pos.get(e.n)!, pos.get(e.m)!)];
+      const f = e.dir > 0 ? e.cross.f : 1 - e.cross.f;
+      const x = e.cross.s > x0 + 5 && e.cross.s < x1 - 5 ? e.cross.s : x0 + f * (x1 - x0);
+      // strictly inside the element and inside one route element, away from its nodes and other bridges
+      if (!(x > x0 + 1 && x < x1 - 1)) return;
+      if (!routeSpans.some(([a, b]) => pos.get(a)! + 1 < x && x < pos.get(b)! - 1)) return;
+      if ([...bridgeOf.values()].some((o) => Math.abs(o.x - x) < 1)) return;
+      const v = virt--;
+      pos.set(v, x);
+      // the part at lower x is on the side the element comes from when it runs with x, else on the other
+      const low = (e.dir > 0 ? e.cross.side : -e.cross.side) as 1 | -1;
+      const endA: EndRef = { ne: "\u0000bridge", end: 0 }, endB: EndRef = { ne: "\u0000bridge", end: 1 };
+      bridges.set(v, { elem: i, ports: new Map<EndRef, Port>([[endA, { kind: "branch", s: low }], [endB, { kind: "branch", s: -low as 1 | -1 }]]) });
+      bridgeOf.set(i, { v, x, endA, endB });
+    });
+  }
+  const bridgeNodes = [...bridges.keys()].sort((a, b) => pos.get(a)! - pos.get(b)!);
+  for (const [k, [a, b]] of routeSpans.entries()) {
+    if (a === b) continue;
+    const step = k < route.steps.length ? route.steps[k]! : undefined;
+    const base = step ? undefined : ex.baseline[k - route.steps.length]!;
+    const entry: EndRef = step ? { ne: step.ne, end: step.forward ? 0 : 1 } : base!.entry;
+    const exit: EndRef = step ? otherEnd(entry) : base!.exit;
+    // a bridge over this element cuts it: the route runs straight through the bridge node
+    const inside = bridgeNodes.filter((v) => pos.get(a)! < pos.get(v)! && pos.get(v)! < pos.get(b)!);
+    let prev = a;
+    for (const v of inside) {
+      edges.push({ elem: -1, L: prev, R: v, ...(prev === a ? { endL: entry } : {}), route: true, lat: 0 });
+      prev = v;
+    }
+    edges.push({ elem: -1, L: prev, R: b, ...(prev === a ? { endL: entry } : {}), endR: exit, route: true, lat: 0 });
+  }
   const stubEnd = new Map<number, number>();
   /** virtual nodes inside an element, where it may change lane */
   const joints = new Set<number>();
@@ -226,6 +266,8 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     // where the heuristic layout lets the track change lane (a kink: the tracks between it and the route
     // change there), the element is cut into parts joined by a joint, so that the solver may do the same
     const cuts: number[] = [];
+    const bridge = bridgeOf.get(i);
+    if (bridge) cuts.push(bridge.x);
     if (kinks && e.m !== undefined) {
       const [x0, x1] = [pos.get(L)!, pos.get(R)!];
       for (const r of (t.runs ?? []).slice(0, -1)) {
@@ -235,15 +277,22 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
       cuts.sort((a, b) => a - b);
     }
     let prev = L, prevEnd = endL;
+    // which side of the route a part lies on, for the order of the tracks: the element's own side where
+    // there is no bridge, else the side of the part
+    const low = bridge ? (bridges.get(bridge.v)!.ports.get(bridge.endA) as { s: 1 | -1 }).s : 0;
+    const latOf = (x: number) => (bridge ? (x < bridge.x ? low : -low) * Math.max(3, Math.abs(e.lat)) : e.lat);
     for (const x of cuts) {
-      const v = virt--;
-      pos.set(v, x);
-      joints.add(v);
-      edges.push({ elem: i, L: prev, R: v, ...(prevEnd ? { endL: prevEnd } : {}), endR: JOINT, route: false, lat: e.lat, part: true });
+      const isBridge = bridge !== undefined && x === bridge.x;
+      const v = isBridge ? bridge.v : virt--;
+      if (!isBridge) {
+        pos.set(v, x);
+        joints.add(v);
+      }
+      edges.push({ elem: i, L: prev, R: v, ...(prevEnd ? { endL: prevEnd } : {}), endR: isBridge ? bridge.endA : JOINT, route: false, lat: latOf(x - 1), part: true });
       prev = v;
-      prevEnd = JOINT;
+      prevEnd = isBridge ? bridge.endB : JOINT;
     }
-    edges.push({ elem: i, L: prev, R, ...(prevEnd ? { endL: prevEnd } : {}), ...(endR ? { endR } : {}), route: false, lat: e.lat, ...(cuts.length ? { part: true } : {}) });
+    edges.push({ elem: i, L: prev, R, ...(prevEnd ? { endL: prevEnd } : {}), ...(endR ? { endR } : {}), route: false, lat: latOf(pos.get(R)!), ...(cuts.length ? { part: true } : {}) });
   });
 
   // ---- one order of all nodes along x: the heuristic x, kept consistent with the edges where it can be
@@ -320,9 +369,11 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     if (g.endL) included.set(g.L, [...(included.get(g.L) ?? []), { edge: gi, end: g.endL, side: 1 }]);
     if (g.endR) included.set(g.R, [...(included.get(g.R) ?? []), { edge: gi, end: g.endR, side: -1 }]);
   });
-  const onRoute = (n: number) => ex.nodes.get(n)?.onRoute ?? false;
+  const onRoute = (n: number) => bridges.has(n) || (ex.nodes.get(n)?.onRoute ?? false);
   const portOf = (n: number, end: EndRef | undefined): Port => {
     if (joints.has(n)) return { kind: "joint" };
+    const bridge = bridges.get(n);
+    if (bridge) return (end && bridge.ports.get(end)) || { kind: "straight" };
     if (!end) return { kind: "straight" };
     const inc = included.get(n) ?? [];
     if (!onRoute(n) && inc.length === 2 && inc[0]!.side !== inc[1]!.side) return { kind: "joint" };
@@ -470,7 +521,8 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
       const port = (i: number, n: number, end: EndRef | undefined): Port => (relaxed.has(`${pi}:${i}`) ? { kind: "free" } : portOf(n, end));
       const portL = p.s >= 0 ? port(p.s, g.L, g.endL) : undefined;
       const portR = p.t < N ? port(p.t, g.R, g.endR) : undefined;
-      const canShort = portL?.kind === "branch" && portR?.kind === "branch" && portL.s === -portR.s && !g.route;
+      // (not at a bridge: a part there keeps a lane of its own beside the route)
+      const canShort = portL?.kind === "branch" && portR?.kind === "branch" && portL.s === -portR.s && !g.route && !bridges.has(g.L) && !bridges.has(g.R);
       let sh: string | undefined;
       if (canShort) {
         sh = m.v(`s${pi}`, 0, 1, "bin");
@@ -681,6 +733,8 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     };
     const schematic = emitSchematic(ex, { point, track, laid }).schematic;
     schematic.windows = reports.map((r) => ({ ...r }));
+    const crossed = [...bridges].filter(([v]) => solved.has(winOf.get(v)!)).map(([v, b]) => ({ x: point(v).x, ne: ex.elems[b.elem]!.ne, ...(byElem.get(b.elem)?.track ? { track: byElem.get(b.elem)!.track! } : {}) }));
+    if (crossed.length) schematic.bridges = crossed.sort((a, b) => a.x - b.x);
     if (grown.some((g) => g > 0.01)) {
       // route distance -> x: the cuts and the route nodes, linear in between
       const scale = new Map<number, number>();

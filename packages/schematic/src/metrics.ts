@@ -25,7 +25,11 @@ export function drawnPolyline(t: SchematicTrack, diagonal = 40): Array<[number, 
   for (let i = 1; i < runs.length; i++) {
     const p = runs[i - 1]!, q = runs[i]!;
     const rise = Math.abs(q.y - p.y) * diagonal;
-    if (Math.abs(q.y) < Math.abs(p.y)) q.start += rise;
+    if (p.y * q.y < 0) {
+      // across the route (a bridge): each side climbs to the route's lane in its own piece
+      p.end += Math.abs(p.y) * diagonal;
+      q.start += Math.abs(q.y) * diagonal;
+    } else if (Math.abs(q.y) < Math.abs(p.y)) q.start += rise;
     else p.end += rise;
   }
   const pts: Array<[number, number]> = [a];
@@ -72,6 +76,8 @@ export function layoutMetrics(s: Schematic, diagonal = 40, onCrossing?: (a: Sche
   const same = (p: { x: number; y: number }, q: { x: number; y: number }) => Math.abs(p.x - q.x) < 0.5 && Math.abs(p.y - q.y) < 1e-6;
   const shareNode = (a: SchematicTrack, b: SchematicTrack) => same(a.from, b.from) || same(a.from, b.to) || same(a.to, b.from) || same(a.to, b.to);
 
+  const bridged = new Set((s.bridges ?? []).map((b) => b.ne));
+  const onLaneZero = (t: SchematicTrack) => t.onRoute || !!t.baseline;
   let bends = 0;
   for (const { pts } of lines) {
     for (let i = 1; i + 1 < pts.length; i++) {
@@ -88,6 +94,8 @@ export function layoutMetrics(s: Schematic, diagonal = 40, onCrossing?: (a: Sche
     for (let i = active.length - 1; i >= 0; i--) if (active[i]!.hi < cur.lo) active.splice(i, 1);
     for (const o of active) {
       if (shareNode(o.t, cur.t)) continue;
+      // a track over the route at a bridge is meant to cross it
+      if ((onLaneZero(o.t) && bridged.has(cur.t.ne)) || (onLaneZero(cur.t) && bridged.has(o.t.ne))) continue;
       let hit = false;
       for (let i = 1; i < o.pts.length && !hit; i++) {
         const p1 = o.pts[i - 1]!, p2 = o.pts[i]!;

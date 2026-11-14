@@ -103,6 +103,11 @@ export interface Schematic {
   tracks: SchematicTrack[];
   switches: SchematicSwitch[];
   crossings?: SchematicCrossing[];
+  /**
+   * Solver layout only: where a track crosses the route without a switch (a bridge or a flat crossing,
+   * found in the geometry). The track changes side there; `x` is on the route's lane.
+   */
+  bridges?: Array<{ x: number; ne: string; track?: string }>;
   /** Tracks drawn as two half stubs (a wye, a loop): which stub ends are one track. */
   connections?: SchematicConnection[];
   /** Elements left out because their station has more tracks on one side than `maxLanes`. */
@@ -197,6 +202,9 @@ interface RouteLine {
   s: number[];
 }
 
+/** Metres from the route at which a track counts as clearly on one side of it. */
+const CROSS_CLEAR = 2.5;
+
 /** Route polyline in local metres with, per vertex, its distance along the route (routebook scale). */
 function routeLine(route: Route, net: TopoNetwork, frame: LocalFrame): RouteLine {
   const pts: XY[] = [];
@@ -281,6 +289,12 @@ export interface Elem {
   diagonal: boolean;
   /** a stub: the next operational point along the track beyond it */
   towards?: string;
+  /**
+   * The element crosses the route (or the baseline) without a node, on a bridge or a flat crossing, as
+   * its geometry shows: `s` is the route distance of the crossing, `f` how far along the element from
+   * `n` it lies (0..1), `side` the side of the route the element is on before it (+1 = left of travel).
+   */
+  cross?: { s: number; f: number; side: 1 | -1 };
 }
 
 export interface NodeInfo {
@@ -611,6 +625,30 @@ export function exploreRoute(route: Route, input: LayoutInput, opts: LayoutOptio
       const line = net.lineFrom(end, frame);
       const l = polylineLength(line);
       e.lat = project(rl, along(line, e.stub ? Math.min(l, stubLength) / 2 : l / 2), info.x - len - 500, info.x + len + 500)?.lateral ?? 0;
+      if (e.m !== undefined && !e.conflict && l > 2 * CROSS_CLEAR) {
+        // sampled every few metres: the element crosses the route where it is clearly on one side before
+        // and clearly on the other after, once
+        const step = Math.max(5, l / 200);
+        let before: { d: number; p: Projection } | undefined;
+        let found: Elem["cross"];
+        let flips = 0;
+        for (let d = 0; d <= l; d += step) {
+          const p = project(rl, along(line, d), info.x - len - 500, info.x + len + 500);
+          // beyond the ends of the line a point projects onto its last vertex: that says nothing about its side
+          if (!p || p.s <= rl.s[0]! + 1 || p.s >= rl.s.at(-1)! - 1) {
+            before = undefined;
+            continue;
+          }
+          if (Math.abs(p.lateral) < CROSS_CLEAR) continue;
+          if (before && Math.sign(before.p.lateral) !== Math.sign(p.lateral)) {
+            flips++;
+            const t = Math.abs(before.p.lateral) / (Math.abs(before.p.lateral) + Math.abs(p.lateral));
+            found = { s: before.p.s + (p.s - before.p.s) * t, f: (before.d + (d - before.d) * t) / l, side: Math.sign(before.p.lateral) as 1 | -1 };
+          }
+          before = { d, p };
+        }
+        if (flips === 1 && found) e.cross = found;
+      }
     }
   }
 

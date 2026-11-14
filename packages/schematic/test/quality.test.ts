@@ -3,7 +3,7 @@ import { layoutQuality, layoutRouteSchematic, loadHighs, prepareSolvedLayout, so
 import { FIXTURES, loadFixture } from "./fixtures.js";
 
 /**
- * The quality gate of the layouter: the solver layout of seven station areas cut out of real RINF data
+ * The quality gate of the layouter: the solver layout of eight station areas cut out of real RINF data
  * (test/fixtures, written by `node scripts/schematic-lab.mjs fixture`) must stay within the numbers
  * below. They are what the layouter reaches today plus a little room; when a change makes a layout
  * better, tighten them, and when one must give way, say why in the commit.
@@ -13,12 +13,13 @@ import { FIXTURES, loadFixture } from "./fixtures.js";
 type Limits = Pick<QualityMetrics, "crossings" | "overlaps" | "bends" | "squeezed" | "steep"> & { lanes: number };
 const LIMITS: Record<(typeof FIXTURES)[number], Limits> = {
   hamar: { crossings: 1, overlaps: 0, bends: 54, squeezed: 2, steep: 0, lanes: 32 },
-  skoyen: { crossings: 3, overlaps: 0, bends: 41, squeezed: 1, steep: 0, lanes: 16 },
+  skoyen: { crossings: 1, overlaps: 0, bends: 46, squeezed: 1, steep: 0, lanes: 16 },
   drammen: { crossings: 5, overlaps: 0, bends: 85, squeezed: 1, steep: 0, lanes: 34 },
   trondheim: { crossings: 1, overlaps: 0, bends: 108, squeezed: 2, steep: 0, lanes: 34 },
   dalane: { crossings: 1, overlaps: 0, bends: 38, squeezed: 1, steep: 0, lanes: 24 },
   radviliskis: { crossings: 12, overlaps: 0, bends: 128, squeezed: 4, steep: 0, lanes: 41 },
   kongsvinger: { crossings: 1, overlaps: 0, bends: 41, squeezed: 1, steep: 0, lanes: 18 },
+  lillestrom: { crossings: 6, overlaps: 0, bends: 53, squeezed: 3, steep: 0, lanes: 21 },
 };
 
 /**
@@ -38,6 +39,26 @@ describe("sides as in Bane NOR's station plans", () => {
       for (const t of t1002) expect(Math.min(t.from.y, t.to.y, t.lane ?? 0)).toBeGreaterThanOrEqual(0);
     }
     expect(prep.reports.reduce((n, w) => n + w.conflicts, 0)).toBe(0);
+  }, 120_000);
+
+  it("Lillestrøm: the Gardermobanen tracks cross under the Hovedbanen and lie on the other side after it", async () => {
+    // plan KO-002279-000: coming from Sagdalen on the Hovedbanen, the Gardermobanen is on the right before
+    // the flyover and its platform tracks 1 and 2 (switches 14 and 34) on the left, above tracks 3 to 11
+    const { route, input } = loadFixture("lillestrom");
+    const highs = await loadHighs();
+    const prep = prepareSolvedLayout(route, input, { timeLimit: 60 });
+    const s = prep.finish(prep.problems.map((p) => solveWithHighs(highs, p)));
+    expect(s.bridges?.length ?? 0).toBeGreaterThanOrEqual(2);
+    const y = (label: string) => s.switches.find((w) => w.label === label)?.y;
+    expect(y("Spv. 14")).toBeGreaterThan(0);
+    expect(y("Spv. 34")).toBeGreaterThan(0);
+    expect(y("HB spv 23")).toBeLessThan(0);
+    // a track over a bridge has a piece on either side of the route
+    const over = s.tracks.filter((t) => s.bridges!.some((b) => b.ne === t.ne));
+    for (const t of over) expect(Math.min(...t.runs!.map((r) => r.y)) * Math.max(...t.runs!.map((r) => r.y))).toBeLessThan(0);
+    // without bridges it stays on one side
+    const flat = prepareSolvedLayout(route, input, { timeLimit: 60, bridges: false });
+    expect(flat.finish(flat.problems.map((p) => solveWithHighs(highs, p))).bridges).toBeUndefined();
   }, 120_000);
 });
 
