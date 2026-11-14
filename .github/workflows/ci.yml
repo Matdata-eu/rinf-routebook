@@ -21,7 +21,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
-      # the layout quality test needs a fetched snapshot and is skipped here
+      # includes the layout quality gate on the station fixtures (packages/schematic/test/quality.test.ts);
+      # the evaluation on a whole fetched snapshot (eval.test.ts) is skipped here
       - run: pnpm test
       # the built app in a browser, under its Content-Security-Policy (the runner's Chrome)
       - run: pnpm smoke

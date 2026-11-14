@@ -23,11 +23,19 @@ import { Lin, LpModel } from "./lp.js";
  * order of importance.
  *
  * Differences from railplot:
- *  - x is the distance along the route in metres: the route nodes are fixed
- *    there, the other nodes keep the order of the heuristic placement
- *    (railplot's mileage) and stay close to it; an element needs `minRun`
- *    metres of horizontal room per lane its diagonals change (soft, so that
- *    elements between two fixed route nodes never make a window infeasible).
+ *  - x starts from the distance along the route in metres: the route nodes
+ *    keep at least their real distance from each other, the other nodes keep
+ *    the order of the heuristic placement (railplot's mileage) and stay close
+ *    to it. An element needs `minRun` metres of horizontal room per lane its
+ *    diagonals change; where the tracks beside the route have no room for
+ *    that between two route nodes, the window is drawn longer than the route
+ *    is there (`stretch`, at a price per metre), and the result carries the
+ *    `scale` from route distance to x. An element is drawn between half and
+ *    twice its length where it can (soft).
+ *  - A long element is split where the heuristic's kinks break it (`kinks`),
+ *    so that it can change lane inside a window too.
+ *  - The elements straight on from both ends of the route, as far as the
+ *    station goes, lie on the route's lane (the baseline).
  *  - The straight leg of a switch is the continuous branch (Bane NOR rule) or
  *    the route; the other leg goes to its side, as in the heuristic.
  *  - A node with two ends (a joint between two elements) may also be the end
@@ -50,6 +58,11 @@ export interface SolvedLayoutOptions extends LayoutOptions {
   timeLimit?: number;
   /** Open line (m) without nodes where the route is cut into windows (default 1000). */
   cutGap?: number;
+  /**
+   * Let a window be drawn longer than the route is there, where its tracks need the room for their
+   * diagonals (default true). The schematic then carries a `scale` from route distance to x.
+   */
+  stretch?: boolean;
   /** Diagnostics per window. */
   onWindow?: (w: WindowReport) => void;
 }
@@ -95,6 +108,8 @@ interface GEdge {
   endR?: EndRef;
   route: boolean;
   lat: number;
+  /** one of the parts an element is cut into at its kinks */
+  part?: boolean;
 }
 
 /** The part of an edge inside one window. */
@@ -124,6 +139,9 @@ type Port =
   /** a branch whose side contradicts the edge order (a crossing without a node): either way */
   | { kind: "free" };
 
+/** Stands for the element end at a joint inside an element. */
+const JOINT: EndRef = { ne: "\u0000joint", end: 0 };
+
 /** Length (m) an element keeps at least, or its own length when shorter. */
 const MIN_LENGTH = 20;
 
@@ -138,6 +156,10 @@ const WEIGHTS = {
   room: 40,
   /** per metre an element is shorter than MIN_LENGTH */
   squeeze: 400,
+  /** per metre an element is drawn shorter than half or longer than twice its length */
+  length: 0.5,
+  /** per metre a window is drawn longer than the route is there */
+  stretch: 1,
 };
 
 /**
@@ -177,8 +199,13 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     if (a === b) continue;
     edges.push({ elem: -1, L: a, R: b, endL: entry, endR: exit, route: true, lat: 0 });
   }
+  for (const b of ex.baseline) edges.push({ elem: -1, L: ex.net.nodeOf(b.entry), R: ex.net.nodeOf(b.exit), endL: b.entry, endR: b.exit, route: true, lat: 0 });
   let virt = -1;
   const stubEnd = new Map<number, number>();
+  /** virtual nodes inside an element, where it may change lane */
+  const joints = new Set<number>();
+  const kinks = opts.kinks !== false;
+  const stretch = opts.stretch !== false;
   /** elements drawn as a plain diagonal between their nodes (no place in the model) */
   const loose = new Set<number>();
   ex.elems.forEach((e, i) => {
@@ -196,7 +223,27 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     }
     const far = e.m !== undefined ? otherEnd(e.a) : undefined;
     const [L, R, endL, endR] = e.dir > 0 ? [e.n, m, e.a, far] : [m, e.n, far, e.a];
-    edges.push({ elem: i, L, R, ...(endL ? { endL } : {}), ...(endR ? { endR } : {}), route: false, lat: e.lat });
+    // where the heuristic layout lets the track change lane (a kink: the tracks between it and the route
+    // change there), the element is cut into parts joined by a joint, so that the solver may do the same
+    const cuts: number[] = [];
+    if (kinks && e.m !== undefined) {
+      const [x0, x1] = [pos.get(L)!, pos.get(R)!];
+      for (const r of (t.runs ?? []).slice(0, -1)) {
+        const x = r.to;
+        if (x > x0 + minRun && x < x1 - minRun && cuts.every((c) => Math.abs(c - x) >= minRun)) cuts.push(x);
+      }
+      cuts.sort((a, b) => a - b);
+    }
+    let prev = L, prevEnd = endL;
+    for (const x of cuts) {
+      const v = virt--;
+      pos.set(v, x);
+      joints.add(v);
+      edges.push({ elem: i, L: prev, R: v, ...(prevEnd ? { endL: prevEnd } : {}), endR: JOINT, route: false, lat: e.lat, part: true });
+      prev = v;
+      prevEnd = JOINT;
+    }
+    edges.push({ elem: i, L: prev, R, ...(prevEnd ? { endL: prevEnd } : {}), ...(endR ? { endR } : {}), route: false, lat: e.lat, ...(cuts.length ? { part: true } : {}) });
   });
 
   // ---- one order of all nodes along x: the heuristic x, kept consistent with the edges where it can be
@@ -275,6 +322,7 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
   });
   const onRoute = (n: number) => ex.nodes.get(n)?.onRoute ?? false;
   const portOf = (n: number, end: EndRef | undefined): Port => {
+    if (joints.has(n)) return { kind: "joint" };
     if (!end) return { kind: "straight" };
     const inc = included.get(n) ?? [];
     if (!onRoute(n) && inc.length === 2 && inc[0]!.side !== inc[1]!.side) return { kind: "joint" };
@@ -334,46 +382,51 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     const m = new LpModel();
     const pieces = w.pieces;
     const N = w.nodes.length;
-    // x: route nodes fixed; the others between the fixed ones around them in the order and inside the cuts
+    // x: the first route node of the window is fixed; the route nodes after it keep at least their real
+    // distance from each other and may move apart (the window stretches) to make room for the tracks
+    // beside them; the other nodes lie between their neighbours in the order and inside the cuts
     const margin = cutGap / 4;
-    const lo = new Array<number>(N), hi = new Array<number>(N);
-    let fixed = w.x0 + margin;
-    if (!Number.isFinite(fixed)) fixed = Math.min(...w.nodes.map((n) => pos.get(n)!)) - 2000;
-    for (let i = 0; i < N; i++) {
-      const n = w.nodes[i]!;
-      if (onRoute(n)) {
-        if (pos.get(n)! < fixed - 1e-6) return undefined;
-        fixed = pos.get(n)!;
-      }
-      lo[i] = fixed;
-    }
-    fixed = w.x1 - margin;
-    if (!Number.isFinite(fixed)) fixed = Math.max(...w.nodes.map((n) => pos.get(n)!)) + 2000;
-    for (let i = N - 1; i >= 0; i--) {
-      const n = w.nodes[i]!;
-      if (onRoute(n)) fixed = pos.get(n)!;
-      hi[i] = fixed;
-      if (lo[i]! > hi[i]! + 1e-6) return undefined;
-    }
+    const P = (i: number) => pos.get(w.nodes[i]!)!;
+    const routeAt: number[] = [];
+    for (let i = 0; i < N; i++) if (onRoute(w.nodes[i]!)) routeAt.push(i);
+    for (let r = 1; r < routeAt.length; r++) if (P(routeAt[r]!) < P(routeAt[r - 1]!) - 1e-6) return undefined;
+    const first = routeAt[0], last = routeAt.at(-1);
+    const stretches = stretch && first !== undefined && last !== undefined && last > first;
+    const low = Number.isFinite(w.x0) ? w.x0 + margin : Math.min(...w.nodes.map((n) => pos.get(n)!)) - 2000;
+    const high = Number.isFinite(w.x1) ? w.x1 - margin : Math.max(...w.nodes.map((n) => pos.get(n)!)) + 2000;
     const X = (i: number): Lin => {
       if (i < 0) return Lin.of(w.x0);
-      if (i >= N) return Lin.of(w.x1);
-      const n = w.nodes[i]!;
-      if (onRoute(n)) return Lin.of(pos.get(n)!);
-      return Lin.of([m.v(`x${i}`, lo[i]!, hi[i]!), 1]);
+      if (i >= N) return Lin.of(w.x1).plus(S(last));
+      if (onRoute(w.nodes[i]!)) return stretches && i !== first ? Lin.of([m.v(`x${i}`, P(i), Infinity), 1]) : Lin.of(P(i));
+      return Lin.of([m.v(`x${i}`, low, Infinity), 1]);
     };
+    /** how far the route node at index r has moved from its place (0 without stretch) */
+    function S(r: number | undefined): Lin {
+      return stretches && r !== undefined && r !== first ? Lin.of(-P(r)).plus(X(r)) : Lin.of(0);
+    }
     const Yn = (i: number): Lin => (onRoute(w.nodes[i]!) ? Lin.of(0) : Lin.of([m.v(`y${i}`, -Y, Y, "int"), 1]));
     const E = (pi: number): Lin => (live[pieces[pi]!.edge]!.route ? Lin.of(0) : Lin.of([m.v(`e${pi}`, -Y, Y, "int"), 1]));
 
-    // order along x
+    // order along x; route nodes at least their real distance apart
     for (let i = 1; i < N; i++) m.row(Lin.of().plus(X(i)).plus(X(i - 1), -1), ">=", 0);
-    // x close to the heuristic placement
+    if (stretches) {
+      for (let r = 1; r < routeAt.length; r++) m.row(Lin.of().plus(X(routeAt[r]!)).plus(X(routeAt[r - 1]!), -1), ">=", P(routeAt[r]!) - P(routeAt[r - 1]!));
+      const total = m.v("xs", 0, Infinity);
+      m.row(Lin.of([total, 1]).plus(S(last), -1), "=", 0);
+      m.minimize(total, WEIGHTS.stretch);
+    }
+    // x close to the heuristic placement (moved along with the route node before it), and inside the cuts
+    let before: number | undefined;
     for (let i = 0; i < N; i++) {
       const n = w.nodes[i]!;
-      if (onRoute(n)) continue;
+      if (onRoute(n)) {
+        before = i;
+        continue;
+      }
+      m.row(Lin.of().plus(X(i)).plus(S(last), -1), "<=", high);
       const d = m.v(`dx${i}`, 0, Infinity);
-      m.row(Lin.of([d, 1]).plus(X(i), -1), ">=", -pos.get(n)!);
-      m.row(Lin.of([d, 1]).plus(X(i)), ">=", pos.get(n)!);
+      m.row(Lin.of([d, 1]).plus(X(i), -1).plus(S(before)), ">=", -pos.get(n)!);
+      m.row(Lin.of([d, 1]).plus(X(i)).plus(S(before), -1), ">=", pos.get(n)!);
       m.minimize(d, WEIGHTS.x);
     }
     // stubs: the virtual end lies the stub length from its node
@@ -465,6 +518,14 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
         const short = m.v(`z${pi}`, 0, Infinity);
         m.minimize(short, WEIGHTS.squeeze);
         m.row(Lin.of([short, 1]).plus(X(p.t)).plus(X(p.s), -1), ">=", Math.min(len, MIN_LENGTH));
+        // a whole element inside the window keeps a drawn length near its real one (soft): between half
+        // and twice of it, so that a track is not pulled out of shape for a bend saved elsewhere
+        if (p.s >= 0 && p.t < N && g.endL && g.endR && !g.part && WEIGHTS.length > 0) {
+          const far = m.v(`f${pi}`, 0, Infinity);
+          m.minimize(far, WEIGHTS.length);
+          m.row(Lin.of([far, 1]).plus(X(p.t)).plus(X(p.s), -1), ">=", len / 2);
+          m.row(Lin.of([far, 1]).plus(X(p.t), -1).plus(X(p.s)), ">=", -(2 * len + minRun));
+        }
       }
       if (rise.length) {
         const lanes = Lin.of();
@@ -532,6 +593,19 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
       }
     });
     if (!pending) for (const r of reports) opts.onWindow?.(r);
+    // how far each window is stretched, and how far everything in it has moved for the windows before it
+    const grown = windows.map((w, k) => {
+      const sol = solved.get(k);
+      return sol ? Math.max(0, sol["xs"] ?? 0) : 0;
+    });
+    const off: number[] = [];
+    grown.reduce((sum, g, k) => ((off[k] = sum), sum + g), 0);
+    /** x of a place of the unstretched (heuristic) layout */
+    const moved = (x: number): number => {
+      let k = 0;
+      while (k < windows.length - 1 && x > windows[k]!.x1) k++;
+      return x + off[k]!;
+    };
     const hp = core.points;
     const points = new Map<number, SchematicPoint>();
     const point = (n: number): SchematicPoint => {
@@ -540,12 +614,17 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
       const k = winOf.get(n);
       const sol = k === undefined ? undefined : solved.get(k);
       const i = local.get(n);
-      if (sol && i !== undefined && !onRoute(n) && sol[`y${i}`] !== undefined) p = { x: round(sol[`x${i}`] ?? pos.get(n)!), y: Math.round(sol[`y${i}`]!) || 0 };
-      else if (onRoute(n)) p = { x: pos.get(n)!, y: 0 };
-      else p = { ...(hp.get(n) ?? { x: pos.get(n)!, y: 0 }) };
+      const o = k === undefined ? 0 : off[k]!;
+      if (sol && i !== undefined && !onRoute(n) && sol[`y${i}`] !== undefined) p = { x: round((sol[`x${i}`] ?? pos.get(n)!) + o), y: Math.round(sol[`y${i}`]!) || 0 };
+      else if (onRoute(n)) p = { x: round(((sol && i !== undefined ? sol[`x${i}`] : undefined) ?? pos.get(n)!) + o), y: 0 };
+      else {
+        const h = hp.get(n) ?? { x: pos.get(n)!, y: 0 };
+        p = { x: round(moved(h.x)), y: h.y };
+      }
       points.set(n, p);
       return p;
     };
+    const movedRuns = (runs: SchematicTrack["runs"]) => runs?.map((r) => ({ from: round(moved(r.from)), to: round(moved(r.to)), y: r.y }));
     // per element: its pieces in the windows it crosses
     const piecesOf = new Map<number, Array<{ k: number; pi: number }>>();
     windows.forEach((w, k) =>
@@ -561,10 +640,10 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
       if (!h) return undefined;
       if (loose.has(i)) return { lane: null };
       const list = piecesOf.get(i);
-      if (!list) return { lane: h.lane, ...(h.runs ? { runs: h.runs } : {}) };
+      if (!list) return { lane: h.lane, ...(h.runs ? { runs: movedRuns(h.runs)! } : {}) };
       const e = ex.elems[i]!;
       // all in windows the solver did not do: the heuristic track as it is
-      if (list.every(({ k }) => !solved.has(k))) return { lane: h.lane, ...(h.runs ? { runs: h.runs } : {}) };
+      if (list.every(({ k }) => !solved.has(k))) return { lane: h.lane, ...(h.runs ? { runs: movedRuns(h.runs)! } : {}) };
       if (list.length === 1) {
         const { k, pi } = list[0]!;
         const sol = solved.get(k)!;
@@ -577,16 +656,16 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
         const w = windows[k]!;
         const p = w.pieces[pi]!;
         const g = live[p.edge]!;
-        const xa = p.s >= 0 ? point(g.L).x : w.x0;
-        const xb = p.t < w.nodes.length ? point(g.R).x : w.x1;
+        const xa = p.s >= 0 ? point(g.L).x : w.x0 + off[k]!;
+        const xb = p.t < w.nodes.length ? point(g.R).x : w.x1 + off[k]! + grown[k]!;
         const sol = solved.get(k);
         if (sol) runs.push({ from: xa, to: xb, y: Math.round(sol[`e${pi}`] ?? 0) || 0 });
         else {
-          // the heuristic runs inside this window
-          const hr = h.runs ?? [{ from: h.from.x, to: h.to.x, y: h.lane ?? 0 }];
+          // the heuristic runs inside this window (which is not stretched)
+          const hr = h.runs ?? [{ from: hp.get(g.L)?.x ?? pos.get(g.L)!, to: hp.get(g.R)?.x ?? pos.get(g.R)!, y: h.lane ?? 0 }];
           for (const r of hr) {
-            const a = Math.max(xa, Math.min(r.from, r.to)), b = Math.min(xb, Math.max(r.from, r.to));
-            if (b > a) runs.push({ from: a, to: b, y: r.y });
+            const a = Math.max(xa - off[k]!, Math.min(r.from, r.to)), b = Math.min(xb - off[k]!, Math.max(r.from, r.to));
+            if (b > a) runs.push({ from: a + off[k]!, to: b + off[k]!, y: r.y });
           }
         }
       }
@@ -602,6 +681,15 @@ export function prepareSolvedLayout(route: Route, input: LayoutInput, opts: Solv
     };
     const schematic = emitSchematic(ex, { point, track, laid }).schematic;
     schematic.windows = reports.map((r) => ({ ...r }));
+    if (grown.some((g) => g > 0.01)) {
+      // route distance -> x: the cuts and the route nodes, linear in between
+      const scale = new Map<number, number>();
+      windows.forEach((w, k) => {
+        if (Number.isFinite(w.x0)) scale.set(w.x0, round(w.x0 + off[k]!));
+        for (const n of w.nodes) if (onRoute(n)) scale.set(pos.get(n)!, point(n).x);
+      });
+      schematic.scale = [...scale].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    }
     return schematic;
   };
 

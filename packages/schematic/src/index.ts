@@ -13,6 +13,8 @@ export {
 export { LocalFrame, signedAngle, curvature, type LngLat, type XY } from "./geo.js";
 export {
   layoutRouteSchematic,
+  schematicX,
+  schematicDistance,
   type Schematic,
   type SchematicTrack,
   type SchematicSwitch,
@@ -20,6 +22,7 @@ export {
   type SchematicCrossing,
   type SchematicWindow,
   type LayoutOptions,
+  type LayoutInput,
 } from "./layout.js";
 export { addKinks, type KinkOptions } from "./kinks.js";
 export {

@@ -1,4 +1,4 @@
-import type { Schematic, SchematicTrack } from "@routebook/schematic";
+import { schematicDistance, schematicX, type Schematic, type SchematicTrack } from "@routebook/schematic";
 import type { Routebook, RoutebookItem } from "@routebook/routebook";
 
 /**
@@ -208,9 +208,9 @@ function stationXs(s: Schematic, rb: Routebook): { busy: number[]; from: number;
   const busy = [
     ...s.tracks.filter((t) => !t.onRoute).flatMap((t) => [t.from.x, t.to.x]),
     ...s.switches.map((w) => w.x),
-    ...rb.items.filter((i) => i.kind === "op" || i.kind === "origin" || i.kind === "destination").map((i) => i.distance),
+    ...rb.items.filter((i) => i.kind === "op" || i.kind === "origin" || i.kind === "destination").map((i) => schematicX(s, i.distance)),
   ];
-  return { busy, from: Math.min(0, ...xsAll) - 20, to: Math.max(s.length, ...xsAll) + 20 };
+  return { busy, from: Math.min(0, ...xsAll) - 20, to: Math.max(schematicX(s, s.length), ...xsAll) + 20 };
 }
 
 /** The x scale of the schematic at a zoom level (1 = 0.5 px/m in stations). */
@@ -237,6 +237,8 @@ export function fitZoom(s: Schematic, rb: Routebook, width: number, min = 0.005,
 export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, opts: SchematicViewOptions): SchematicView {
   const scale = schematicScale(s, rb, opts.zoom);
   const sx = (x: number) => PAD + scale.map(x);
+  /** pixel of a distance along the route (a station may be drawn longer than it is) */
+  const dx = (d: number) => sx(schematicX(s, d));
   const sy = (y: number) => TOP + (s.maxLane - y + 0.5) * LANE;
   const width = scale.width + 2 * PAD;
   const height = TOP + (s.maxLane - s.minLane + 1) * LANE + BOTTOM;
@@ -249,9 +251,9 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   const opLabels: Array<{ x: number; y: number; kind: string; name: string; tip: string }> = [];
   const opItems = rb.items.filter((i) => i.kind === "op" || i.kind === "origin" || i.kind === "destination");
   const opNames = opItems.map((i) => (i.label ?? "").replace(/^(Depart|Arrive)\s+/i, ""));
-  const rows = labelRows(opItems.map((i, k) => ({ x: sx(i.distance), width: textWidth(opNames[k]!, 12) })), OP_ROWS);
+  const rows = labelRows(opItems.map((i, k) => ({ x: dx(i.distance), width: textWidth(opNames[k]!, 12) })), OP_ROWS);
   opItems.forEach((i, k) => {
-    const p = sx(i.distance);
+    const p = dx(i.distance);
     const name = opNames[k]!;
     const tip = `${name} · ${(i.distance / 1000).toFixed(2)} km from the start`;
     const line = el("line", { x1: p, x2: p, y1: TOP - 10, y2: height - BOTTOM, class: `sch-op-line kind-${i.kind}` }, ops);
@@ -276,13 +278,13 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     else if (b === "inside at end") span = [i.distance, s.length];
     if (b === "exit") open.delete(key);
     if (!span) continue;
-    const x0 = sx(span[0]), x1 = sx(span[1]);
+    const x0 = dx(span[0]), x1 = dx(span[1]);
     const r = el("rect", { x: x0, y: sy(0) - 9, width: Math.max(2, x1 - x0), height: 18, rx: 3, class: "sch-tunnel" }, tunnels);
     title(r, `Tunnel ${i.label ?? ""} · ${((span[1] - span[0]) / 1000).toFixed(2)} km`);
   }
   for (const [key, d] of open) {
     const it = rb.items.find((j) => j.kind === "tunnel" && (j.source ?? j.label) === key);
-    const x0 = sx(d), x1 = sx(s.length);
+    const x0 = dx(d), x1 = dx(s.length);
     title(el("rect", { x: x0, y: sy(0) - 9, width: Math.max(2, x1 - x0), height: 18, rx: 3, class: "sch-tunnel" }, tunnels), `Tunnel ${it?.label ?? ""}`);
   }
 
@@ -353,7 +355,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   const signals = rb.items.filter((i) => i.kind === "signal");
   const isMain = (i: RoutebookItem) => MAIN_SIGNALS.has(String(i.data?.["signalType"] ?? ""));
   for (const i of signals) {
-    const p = sx(i.distance), y = sy(0);
+    const p = dx(i.distance), y = sy(0);
     const both = i.data?.["direction"] === "both";
     const type = String(i.data?.["signalType"] ?? "");
     const g = el("g", { transform: `translate(${p.toFixed(1)},${y})`, class: [type ? `type-${type}` : "", isMain(i) ? "main" : ""].filter(Boolean).join(" ") }, sig);
@@ -364,7 +366,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   // labels: main signals first, so they win the space
   for (const i of [...signals.filter(isMain), ...signals.filter((i) => !isMain(i))]) {
     if (!i.label || (!isMain(i) && opts.zoom < SIGNAL_LABEL_ZOOM)) continue;
-    const p = sx(i.distance), y = sy(0);
+    const p = dx(i.distance), y = sy(0);
     const text = i.label.replace(/^[^\s-]+-/, "");
     const half = textWidth(text, 9) / 2 + 1;
     if (space.place(p - half, y + 14, p + half, y + 24)) el("text", { x: p, y: y + 23, "text-anchor": "middle", class: `sch-signal-label${isMain(i) ? " main" : ""}` }, labels).textContent = text;
@@ -374,7 +376,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   const lcs = el("g", { class: "sch-lcs" }, svg);
   for (const i of rb.items) {
     if (i.kind !== "levelCrossing") continue;
-    const g = el("g", { transform: `translate(${sx(i.distance).toFixed(1)},${sy(0)})`, class: "sch-lc" }, lcs);
+    const g = el("g", { transform: `translate(${dx(i.distance).toFixed(1)},${sy(0)})`, class: "sch-lc" }, lcs);
     el("path", { d: "M-3,-9 V9 M3,-9 V9" }, g);
     title(g, `Level crossing ${i.label ?? ""} · ${(i.distance / 1000).toFixed(3)} km`);
   }
@@ -401,7 +403,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     let free = PAD - 4;
     for (const i of rb.items) {
       if (i.kind !== row) continue;
-      const p = sx(i.distance);
+      const p = dx(i.distance);
       const text = row === "speed" ? String(i.data?.["speed"] ?? i.label ?? "") : row === "gradient" ? (i.label ?? "").replace(/\s*‰$/, "") : (i.label ?? "");
       el("line", { x1: p, x2: p, y1: y - 10, y2: y + 2, class: "sch-band-tick" }, bottom);
       const w = textWidth(text, 10);
@@ -416,7 +418,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
   const rulerY = base + BAND_ROWS.length * ROW;
   let lastPx = -Infinity;
   for (let km = 0; km * 1000 <= s.length; km++) {
-    const p = sx(km * 1000);
+    const p = dx(km * 1000);
     if (p - lastPx < 56) continue;
     lastPx = p;
     el("line", { x1: p, x2: p, y1: rulerY + 4, y2: rulerY + 10, class: "sch-ruler-tick" }, bottom);
@@ -438,7 +440,7 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
       marker.setAttribute("visibility", "hidden");
       return;
     }
-    const p = sx(d);
+    const p = dx(d);
     marker.setAttribute("x1", String(p));
     marker.setAttribute("x2", String(p));
     marker.setAttribute("visibility", "visible");
@@ -448,12 +450,12 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
 
   svg.addEventListener("click", (e) => {
     const r = svg.getBoundingClientRect();
-    const d = scale.invert(e.clientX - r.left - PAD);
+    const d = schematicDistance(s, scale.invert(e.clientX - r.left - PAD));
     opts.onPick(Math.max(0, Math.min(s.length, d)));
   });
 
   root.replaceChildren(svg);
   stick();
   moveMarker(opts.selectedDistance);
-  return { moveMarker, distanceAt: (px) => scale.invert(px - PAD), pxAt: (d) => sx(d), routeY: sy(0) };
+  return { moveMarker, distanceAt: (px) => schematicDistance(s, scale.invert(px - PAD)), pxAt: dx, routeY: sy(0) };
 }
