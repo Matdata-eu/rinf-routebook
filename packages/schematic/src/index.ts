@@ -20,6 +20,7 @@ export {
   type SchematicSwitch,
   type SchematicPoint,
   type SchematicCrossing,
+  type SchematicConnection,
   type SchematicWindow,
   type LayoutOptions,
   type LayoutInput,

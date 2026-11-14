@@ -193,10 +193,36 @@ export function navigability(nav: string | undefined): Pick<NetRelation, "naviga
 /**
  * What decides whether Routebook can work on a dataset (see the web app's Datasets dialog):
  * OPs with a position on the micro topology (a route needs one at each end), signals, and the
- * length of track in kilometres to judge the number of signals by.
+ * length of track in kilometres to judge the number of signals by. For the schematic track layout:
+ * the places where tracks meet by their number of legs (`junctions` with three, a plain switch;
+ * `crossingNodes` with four, a diamond crossing or a slip; `bigNodes` with more, which the layout
+ * can only approximate).
  */
-export function readinessCounts(snapshot: Pick<Snapshot, "ops" | "features" | "topology">): { routableOps: number; signals: number; trackKm: number } {
+export function readinessCounts(snapshot: Pick<Snapshot, "ops" | "features" | "topology">): { routableOps: number; signals: number; trackKm: number; junctions: number; crossingNodes: number; bigNodes: number } {
+  // element ends joined by net relations are one node
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    let r = k;
+    for (let p = parent.get(r); p !== undefined && p !== r; p = parent.get(r)) r = p;
+    for (let c = k; c !== r; ) {
+      const n = parent.get(c) ?? r;
+      parent.set(c, r);
+      c = n;
+    }
+    return r;
+  };
+  for (const r of snapshot.topology.netRelations) {
+    const a = `${r.a}|${r.aAtOrigin ? 0 : 1}`, b = `${r.b}|${r.bAtOrigin ? 0 : 1}`;
+    for (const k of [a, b]) if (!parent.has(k)) parent.set(k, k);
+    parent.set(find(a), find(b));
+  }
+  const legs = new Map<string, number>();
+  for (const k of parent.keys()) legs.set(find(k), (legs.get(find(k)) ?? 0) + 1);
+  const size = (n: number) => [...legs.values()].filter((v) => (n === 5 ? v >= 5 : v === n)).length;
   return {
+    junctions: size(3),
+    crossingNodes: size(4),
+    bigNodes: size(5),
     routableOps: snapshot.ops.filter((op) => op.points.length || op.areas.length).length,
     signals: snapshot.features.filter((f) => f.kind === "signal").length,
     trackKm: Math.round(snapshot.topology.netElements.reduce((s, e) => s + e.length, 0) / 1000),

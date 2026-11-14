@@ -103,3 +103,11 @@ describe("readiness", () => {
     expect(readiness({ status: "pending" }).level).toBe("unknown");
   });
 });
+
+describe("readiness of junctions for the schematic", () => {
+  it("names the junctions of more than four tracks", () => {
+    const d = { fetchedAt: "2026-11-01", counts: { ops: 10, netElements: 100, netRelations: 100, routableOps: 10, signals: 100, trackKm: 100, bigNodes: 12 } };
+    expect(readiness(d).detail).toContain("12 junctions join more than four tracks");
+    expect(readiness({ ...d, counts: { ...d.counts, bigNodes: 0 } }).detail).not.toContain("junctions");
+  });
+});

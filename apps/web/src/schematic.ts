@@ -124,6 +124,8 @@ export function trackPath(t: SchematicTrack, sx: (x: number) => number, sy: (y: 
 
 export interface SchematicViewOptions {
   zoom: number;
+  /** Outline the solver's windows with their status (`?debug=schematic`). */
+  debug?: boolean;
   selectedDistance?: number;
   onPick: (distance: number) => void;
 }
@@ -147,6 +149,8 @@ const BAND_ROWS = ["line", "speed", "gradient"] as const;
 const BOTTOM = BAND_ROWS.length * ROW + 40;
 const PAD = 40;
 const OP_ROWS = 3;
+/** Zoom from which the switches beside the route are numbered. */
+const SWITCH_LABEL_ZOOM = 1.5;
 /** Zoom from which the names of other than main signals are shown. */
 const SIGNAL_LABEL_ZOOM = 2;
 /** Signal types that are main signals (Bane NOR hovedsignal): named at every zoom. */
@@ -213,6 +217,18 @@ function stationXs(s: Schematic, rb: Routebook): { busy: number[]; from: number;
   return { busy, from: Math.min(0, ...xsAll) - 20, to: Math.max(schematicX(s, s.length), ...xsAll) + 20 };
 }
 
+/** The x ranges where tracks lie beside the route, merged where they are less than 300 m apart. */
+function stationSpans(s: Schematic): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const list = s.tracks.filter((t) => !t.onRoute && !t.baseline).map((t) => [Math.min(t.from.x, t.to.x), Math.max(t.from.x, t.to.x)] as [number, number]);
+  for (const [a, b] of list.sort((p, q) => p[0] - q[0])) {
+    const last = spans.at(-1);
+    if (last && a <= last[1] + 300) last[1] = Math.max(last[1], b);
+    else spans.push([a, b]);
+  }
+  return spans;
+}
+
 /** The x scale of the schematic at a zoom level (1 = 0.5 px/m in stations). */
 export function schematicScale(s: Schematic, rb: Routebook, zoom: number): XScale {
   const { busy, from, to } = stationXs(s, rb);
@@ -263,6 +279,10 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     }
     opLabels.push({ x: p, y: 18 + rows[k]! * 18, kind: i.kind, name, tip });
   });
+
+  // station areas (where tracks lie beside the route): a faint band, so that they stand out from the open line
+  const areas = el("g", { class: "sch-areas" }, svg);
+  for (const [a, b] of stationSpans(s)) el("rect", { x: sx(a) - 14, y: TOP - 10, width: sx(b) - sx(a) + 28, height: height - BOTTOM - TOP + 10, rx: 6, class: "sch-area" }, areas);
 
   // tunnels: a band behind the route
   const tunnels = el("g", { class: "sch-tunnels" }, svg);
@@ -316,16 +336,27 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     }
   }
 
+  // a wye or a loop: its two half stubs joined by an arc on the side they point to
+  for (const c of s.connections ?? []) {
+    const a = [sx(c.from.x), sy(c.from.y)], b = [sx(c.to.x), sy(c.to.y)];
+    const bulge = c.dir * Math.min(48, Math.max(18, Math.abs(b[1]! - a[1]!) * 0.45));
+    const far = (c.dir > 0 ? Math.max(a[0]!, b[0]!) : Math.min(a[0]!, b[0]!)) + bulge;
+    const d = `M${a[0]!.toFixed(1)},${a[1]!.toFixed(1)} C${far.toFixed(1)},${a[1]!.toFixed(1)} ${far.toFixed(1)},${b[1]!.toFixed(1)} ${b[0]!.toFixed(1)},${b[1]!.toFixed(1)}`;
+    const arc = el("path", { d, class: `sch-connection${c.kind ? ` kind-${c.kind}` : ""}` }, layer);
+    title(arc, `Track ${c.track ?? "?"} joins these two ends (${Math.round(c.length)} m): both ends point the same way along the route, as in a triangle or a loop\n${c.ne}`);
+  }
+
   // crossings and slips: both tracks straight through, marked with an X
   const sw = el("g", { class: "sch-switches" }, svg);
   for (const c of s.crossings ?? []) {
     const x = sx(c.x), y = sy(c.y);
     const g = el("g", { transform: `translate(${x.toFixed(1)},${y.toFixed(1)})`, class: `sch-crossing${c.onRoute ? " on-route" : ""}` }, sw);
     el("path", { d: "M-4,-4 L4,4 M-4,4 L4,-4" }, g);
-    title(g, c.slip ? "Slip switch" : "Crossing");
+    title(g, c.legs ? `Junction of ${c.legs} tracks in one node of the RINF topology (drawn approximately)` : c.slip ? "Slip switch" : "Crossing");
   }
 
-  // switches; their numbers get the label space first, then track names
+  // switches; the numbers of those on the route get the label space first, then track names
+  const switchLabels: Array<{ x: number; y: number; text: string; onRoute: boolean }> = [];
   for (const w of s.switches) {
     const c = el("circle", { cx: sx(w.x), cy: sy(w.y), r: w.onRoute ? 3.5 : 2.5, class: `sch-switch${w.onRoute ? " on-route" : ""}${w.routeDeviates ? " route-deviates" : ""}` }, sw);
     title(
@@ -335,19 +366,24 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
         `Continuous branch chosen by: ${RULE_TEXT[w.rule]}` +
         (w.routeDeviates ? "\nThe route takes the deviating branch" : ""),
     );
-    if (w.onRoute && w.label) {
-      const text = shortSwitchLabel(w.label);
-      const x = sx(w.x), y = sy(w.y) + (w.deviates > 0 ? 15 : -7);
-      const half = textWidth(text, 10) / 2 + 1;
-      if (space.place(x - half, y - 9, x + half, y + 1)) el("text", { x, y, "text-anchor": "middle", class: "sch-switch-label" }, labels).textContent = text;
-    }
+    if (w.label && (w.onRoute || opts.zoom >= SWITCH_LABEL_ZOOM)) switchLabels.push({ x: sx(w.x), y: sy(w.y) + (w.deviates > 0 ? 15 : -7), text: shortSwitchLabel(w.label), onRoute: w.onRoute });
   }
+  const placeSwitchLabels = (onRoute: boolean) => {
+    for (const l of switchLabels) {
+      if (l.onRoute !== onRoute) continue;
+      const half = textWidth(l.text, 10) / 2 + 1;
+      if (space.place(l.x - half, l.y - 9, l.x + half, l.y + 1)) el("text", { x: l.x, y: l.y, "text-anchor": "middle", class: `sch-switch-label${onRoute ? "" : " off-route"}` }, labels).textContent = l.text;
+    }
+  };
+  placeSwitchLabels(true);
   for (const l of trackLabels) {
     const half = textWidth(l.text, 10) / 2 + 1;
     const x = (l.x0 + l.x1) / 2, y = l.y - 4;
     if (l.x1 - l.x0 < 24 + 2 * half || !space.place(x - half, y - 9, x + half, y + 1)) continue;
     el("text", { x, y, "text-anchor": "middle", class: "sch-track-label" }, labels).textContent = l.text;
   }
+  // the switches beside the route are numbered when zoomed in, where the track names leave room
+  placeSwitchLabels(false);
 
   // signals on the route: the mast on the right of the track for the direction it applies to (below = right of travel), the arm towards that direction.
   // Main signals (home, intermediate, exit, block) are named at every zoom, the others from SIGNAL_LABEL_ZOOM.
@@ -433,6 +469,17 @@ export function renderSchematic(root: HTMLElement, s: Schematic, rb: Routebook, 
     names.setAttribute("transform", `translate(${root.scrollLeft},0)`);
   };
   root.onscroll = stick;
+
+  if (opts.debug) {
+    // the solver's windows: where the route was cut, and how each one ended
+    const dbg = el("g", { class: "sch-debug" }, svg);
+    (s.windows ?? []).forEach((w, k) => {
+      const x0 = dx(w.from), x1 = dx(w.to);
+      el("rect", { x: x0, y: TOP - 6, width: Math.max(2, x1 - x0), height: height - BOTTOM - TOP + 2, class: `sch-debug-window status-${w.status}` }, dbg);
+      el("text", { x: x0 + 4, y: TOP + 8, class: "sch-debug-text" }, dbg).textContent =
+        `#${k} ${w.status} · ${w.nodes} nodes, ${w.pieces} pieces${w.vars ? ` · ${w.vars} vars, ${w.rows} rows` : ""}${w.conflicts ? ` · ${w.conflicts} order conflicts` : ""}`;
+    });
+  }
 
   const marker = el("line", { y1: TOP - 10, y2: height - BOTTOM, class: "sch-marker", visibility: "hidden" }, svg);
   const moveMarker = (d: number | undefined) => {

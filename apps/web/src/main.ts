@@ -484,6 +484,8 @@ const MAX_TRANSIT = 6;
 let computeToken = 0;
 type View = "map" | "schematic" | "strip" | "drive";
 const VIEWS: View[] = ["map", "schematic", "strip", "drive"];
+/** `?debug=schematic`: outlines the solver's windows in the schematic. */
+const DEBUG_SCHEMATIC = params.get("debug") === "schematic";
 let view: View = VIEWS.find((v) => v === params.get("view")) ?? "map";
 /** Timetable: departure from the origin (epoch ms today, from ?dep=08:15) and the OPs stopped at (?stops=UOPID,UOPID) */
 let departure = parseClock(params.get("dep"));
@@ -871,6 +873,7 @@ function drawSchematic(): void {
   const visible = rb.items.map((item, index) => ({ item, index })).filter(({ item }) => !hiddenKinds.has(item.kind));
   schematicView = renderSchematic(schematicScroll, schematic.layout, rb, {
     zoom: schematicZoom,
+    ...(DEBUG_SCHEMATIC ? { debug: true } : {}),
     ...(selectedDistance !== undefined ? { selectedDistance } : {}),
     onPick: (distance) => {
       // nearest visible routebook item
