@@ -277,6 +277,14 @@ a:hover { color: var(--brand-strong); }
 .sch-towards { font-size: 11px; font-style: italic; fill: var(--ink-muted); pointer-events: none; }
 .sch-signal-label { font-size: 10px; fill: var(--ink); pointer-events: none; }
 .sch-crossing path { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.sch-switch-label.off-route { font-size: 10px; fill-opacity: 0.8; }
+.sch-connection { fill: none; stroke: var(--ink-muted); stroke-width: 1.5; stroke-dasharray: 1.5 4; stroke-linecap: round; }
+.sch-connection:hover { stroke: var(--brand-strong); }
+.sch-area { fill: var(--ink); fill-opacity: 0.025; pointer-events: none; }
+.sch-debug { pointer-events: none; }
+.sch-debug-window { fill: none; stroke: var(--brand-strong); stroke-width: 1; stroke-dasharray: 6 4; }
+.sch-debug-window:not(.status-solved) { stroke: var(--amber-ink); stroke-width: 2; }
+.sch-debug-text { font-size: 10px; fill: var(--brand-strong); }
 .sch-tools .btn:not(.icon) { min-height: 36px; padding: 0 var(--space-3); }
 .sch-op { font-size: 13px; font-weight: 600; fill: var(--ink); }
 .sch-op.kind-origin { fill: var(--from); } .sch-op.kind-destination { fill: var(--to); }

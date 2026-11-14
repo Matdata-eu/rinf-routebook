@@ -43,6 +43,8 @@ describe("layout quality on real stations", () => {
       // the same tracks and switches as the heuristic, and x is still the route distance outside stretched stations
       expect(solved.tracks.length).toBe(heuristic.tracks.length);
       expect(solved.switches.length).toBe(heuristic.switches.length);
+      // a wye or a loop is two half stubs with a connection that says they are one track
+      expect(solved.connections?.length ?? 0).toBe(q.split);
       for (const [d, x] of solved.scale ?? []) expect(x).toBeGreaterThanOrEqual(d - 0.01);
     }, 120_000);
   }

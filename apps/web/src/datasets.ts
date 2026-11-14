@@ -175,7 +175,9 @@ export function readiness(d: Pick<DatasetInfo, "counts" | "fetchedAt" | "status"
   const perKm = signals / km;
   const density = `${signals.toLocaleString()} signals on ${km.toLocaleString()} km of track`;
   if (perKm < MIN_SIGNALS_PER_KM) return { level: "limited", label: signals ? "Few signals" : "No signals", detail: `Routes work, but ${density}: the routebook will miss most signals (ready from ${MIN_SIGNALS_PER_KM} per km).` };
-  return { level: "ready", label: "Ready", detail: `${density}${placed !== undefined ? `, ${placed.toLocaleString()} operational points on the track network` : ""}.` };
+  // junctions the schematic track layout can only approximate (more than four tracks meeting in one node)
+  const big = c.bigNodes ? ` ${c.bigNodes.toLocaleString()} junctions join more than four tracks in one node: the schematic track layout draws those approximately.` : "";
+  return { level: "ready", label: "Ready", detail: `${density}${placed !== undefined ? `, ${placed.toLocaleString()} operational points on the track network` : ""}.${big}` };
 }
 
 /** The default public RINF Atlas instance (open source, by Matdata); set `atlasUrl` to false to drop the links. */

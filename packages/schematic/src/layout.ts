@@ -16,6 +16,24 @@ export interface SchematicPoint {
   y: number;
 }
 
+/**
+ * A track whose two ends point the same way along the route (the third side of a wye, or a loop back to
+ * the same node). No line along x can join them, so each end is a short stub and this says that the two
+ * stub ends are the same track.
+ */
+export interface SchematicConnection {
+  ne: string;
+  track?: string;
+  kind?: Track["kind"];
+  /** the far ends of the two stubs */
+  from: SchematicPoint;
+  to: SchematicPoint;
+  /** +1: the stubs point towards increasing x */
+  dir: 1 | -1;
+  /** real length of the track (m) */
+  length: number;
+}
+
 export interface SchematicTrack {
   ne: string;
   /** Track name (era:Track label) and kind. */
@@ -65,13 +83,19 @@ export interface SchematicSwitch {
   switchId?: string;
 }
 
-/** A node with 4 ends: a diamond crossing, or a slip switch when more than the two straight pairs are navigable. */
+/**
+ * A node with 4 ends: a diamond crossing, or a slip switch when more than the two straight pairs are
+ * navigable. A node with more ends (some networks model a whole junction as one node) is drawn the same
+ * way, by its straightest pairs, and carries the number of its `legs`.
+ */
 export interface SchematicCrossing {
   node: number;
   x: number;
   y: number;
   onRoute: boolean;
   slip: boolean;
+  /** number of ends, when more than 4 */
+  legs?: number;
 }
 
 export interface Schematic {
@@ -79,6 +103,8 @@ export interface Schematic {
   tracks: SchematicTrack[];
   switches: SchematicSwitch[];
   crossings?: SchematicCrossing[];
+  /** Tracks drawn as two half stubs (a wye, a loop): which stub ends are one track. */
+  connections?: SchematicConnection[];
   /** Elements left out because their station has more tracks on one side than `maxLanes`. */
   omitted?: number;
   minLane: number;
@@ -960,6 +986,7 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
     return a === b ? { ...t, from: { ...t.from }, to: { ...t.to } } : { ...t, from: { x: point(a).x, y: 0 }, to: { x: point(b).x, y: 0 } };
   });
   const byElem = new Map<number, SchematicTrack>();
+  const connections: SchematicConnection[] = [];
   let omitted = 0;
   elems.forEach((e, i) => {
     const placed = place.track(i);
@@ -980,6 +1007,7 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
     if (e.conflict && e.m !== undefined && laid(e.n) && laid(e.m)) {
       // its ends point the same way along x (a wye, or a loop back to the same node): no line can join
       // them, so each end gets a short stub in the direction it leaves its node
+      const halves: SchematicPoint[] = [];
       for (const [n, end] of [[e.n, e.a], [e.m, far]] as const) {
         const from = point(n);
         const off = mainOf(n).has(endKey(end)) ? 0 : sigma(n, end) / 2;
@@ -987,7 +1015,10 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
         const t: SchematicTrack = { ne: e.ne, ...describe(e.ne), onRoute: false, from, to: { x: from.x + dir * Math.min(e.len / 2, stubLength / 2), y: from.y + off }, lane: null, stub: true };
         if (n === e.n) byElem.set(i, t);
         tracks.push(t);
+        halves.push(t.to);
       }
+      // the two halves are one track: the renderer joins them with an arc on the side they point to
+      connections.push({ ne: e.ne, ...describe(e.ne), from: halves[0]!, to: halves[1]!, dir: e.dir, length: e.len });
       return;
     }
     const { lane, runs } = placed;
@@ -1021,11 +1052,11 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
         ...(sw.label ? { label: sw.label } : {}),
         ...(sw.switchId ? { switchId: sw.switchId } : {}),
       });
-    } else if (ends(n).length === 4) {
+    } else if (ends(n).length >= 4) {
       const list = ends(n);
       let pairs = 0;
       for (const a of list) for (const b of list) if (endKey(a) < endKey(b) && (net.isNavigable(a, b) || net.isNavigable(b, a))) pairs++;
-      crossings.push({ node: n, x: p.x, y: p.y, onRoute: onR, slip: pairs > 2 });
+      crossings.push({ node: n, x: p.x, y: p.y, onRoute: onR, slip: pairs > 2, ...(list.length > 4 ? { legs: list.length } : {}) });
     }
   }
   let minLane = 0, maxLane = 0;
@@ -1033,7 +1064,7 @@ export function emitSchematic(ex: Explored, place: Placement, opts: { kinks?: bo
     minLane = Math.min(minLane, y);
     maxLane = Math.max(maxLane, y);
   }
-  return { schematic: { length: route.length, tracks, switches, crossings, omitted, minLane, maxLane }, byElem };
+  return { schematic: { length: route.length, tracks, switches, crossings, ...(connections.length ? { connections } : {}), omitted, minLane, maxLane }, byElem };
 }
 
 /** The heuristic layout together with the exploration it was made from (shared with the solver layout). */
