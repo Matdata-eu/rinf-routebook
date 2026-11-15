@@ -1,4 +1,5 @@
-import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { type GeoJSONSource, type Map as MapLibreMap } from "maplibre-gl";
 import type { Routebook, RoutebookItem } from "@routebook/routebook";
 import type { RouteResult } from "./engine.js";
 import type { LngLat } from "./geometry.js";
