@@ -1,4 +1,6 @@
-import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
+import { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@fontsource/barlow/400.css";
 import "@fontsource/barlow/500.css";
@@ -32,6 +34,9 @@ import { loadPlugins, showOverlays } from "./plugins.js";
 import { extendRoutebook, overlayLayers } from "@routebook/core-extensions";
 import { openHelp } from "./help.js";
 import { currentTheme, followSystemTheme, mapColors, onThemeChange, setTheme, themedRasterPaint } from "./theme.js";
+
+// MapLibre 6 loads its worker from a file next to its module: point it at the copy Vite emits
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 const params = new URLSearchParams(location.search);
 const BASE = import.meta.env.BASE_URL;
@@ -135,7 +140,9 @@ const networkColor = (b: Basemap) => (b.aerial ? mapColors().networkOnImagery : 
 /** Repaint the map in the current theme (MatData colours: brand route and origin, signal-amber selection). */
 function paintMap(): void {
   const c = mapColors();
-  const set = (layer: string, prop: string, value: unknown) => map.getLayer(layer) && map.setPaintProperty(layer, prop, value);
+  type Paint = Parameters<typeof map.setPaintProperty>;
+  const set = (layer: string, prop: string, value: unknown) =>
+    map.getLayer(layer) && map.setPaintProperty(layer, prop as Paint[1], value as Paint[2]);
   if (map.getLayer("bg") && !document.body.classList.contains("driving")) set("bg", "background-color", c.bg);
   // a vector basemap has a light and a dark style: swap its layers
   if (basemap.vector && map.getLayer("bg")) replaceBasemapLayers(false);
