@@ -93,6 +93,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Fixed
 
+- Routes keep to the through track of a station instead of a slow passing loop or platform track that is a few metres shorter: running tracks below 80 km/h cost `80/speed` per metre in the default cost model (`slowSpeed`). The routebook no longer reports the loop's electrification as a change (Blaker, or the start on the non-electrified track 3 at Sørumsand towards Mysen). `RoutingGraph.breaks()` checks that a route is one continuous movement, and the web app refuses one that is not.
 - A request with malformed percent-encoding (`GET /%`) crashed the whole server; it now gets 400 or 404, and errors while reading a file no longer stop the process.
 - Safari stopped updating the URL (and threw) while the Strip view's train was running: the URL is now written at most twice a second.
 - Search finds names with ø, æ, ß, ł and similar letters typed without them (Bodo finds Bodø).
