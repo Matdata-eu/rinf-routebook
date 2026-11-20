@@ -65,7 +65,7 @@ export function openHelp(opts: { onDatasets?: () => void } = {}): void {
           false,
           ["The route runs on RINF's ", b("micro topology"), ": the linear elements (pieces of track, ", code("era:LinearElement"), ") and the net relations that say which ends join and whether a train can pass (", code("era:NetRelation"), ", navigability ", code("Both"), ")."],
           ["Each end of the route is where RINF puts the operational point on that network: its net reference (", code("era:netReference"), ", a point or an area on one or more linear elements)."],
-          ["Among all connected paths, RouteBook takes the shortest, with a preference for running tracks over sidings. It is not a timetabled path: it may differ from the route a train would actually be given."],
+          ["Among all connected paths, RouteBook takes the shortest, with a preference for running tracks over sidings and for the through track of a station over a slow loop or platform track. It is not a timetabled path: it may differ from the route a train would actually be given."],
           ["Between two networks, RINF has no net relations, so RouteBook joins them itself where both infrastructure managers declare the same border point, or two border points lie close together. The routebook marks where the route crosses."],
         ),
         section(
