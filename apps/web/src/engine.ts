@@ -165,6 +165,8 @@ export class RouteEngine {
     if (dst.intervals.length === 0) throw new Error(`${to.name} has no position on the track network in RINF`);
     const route = this.graph.route(src.intervals, dst.intervals, { costModel: this.costModel });
     if (!route) throw new Error(`No route between ${from.name} and ${to.name} (not connected in the RINF topology)`);
+    // the routebook only reports what lies on the tracks the train runs over, so the route must be one movement
+    if (this.graph.breaks(route).length) throw new Error(`The route between ${from.name} and ${to.name} is not continuous`);
     const built = buildRoutebook({ index: this.index, route, from, to, endpointModes: { from: src.mode, to: dst.mode } });
     const routebook = this.networks ? addBorderItems(built, this.networks) : built;
     const geometry = buildRouteGeometry(route, this.snapshot.geometry ?? {}, this.graph.lengths);

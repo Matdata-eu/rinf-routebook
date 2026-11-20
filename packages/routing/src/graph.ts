@@ -108,6 +108,30 @@ export class RoutingGraph {
   }
 
   /**
+   * Where a route is not one continuous movement over the topology: the indexes of the steps that
+   * do not start where the step before them left off (the previous step must leave its element at
+   * an end, and a navigable relation must lead from that end to the end this step enters at).
+   * Empty for a continuous route.
+   */
+  breaks(route: Pick<Route, "steps">): number[] {
+    const out: number[] = [];
+    const eps = 1e-3;
+    route.steps.forEach((s, i) => {
+      if (i === 0) return;
+      const p = route.steps[i - 1]!;
+      const pLen = this.lengths.get(p.ne), len = this.lengths.get(s.ne);
+      if (pLen === undefined || len === undefined) return out.push(i);
+      const exit: Side | undefined = Math.abs(p.to) < eps ? 0 : Math.abs(p.to - pLen) < eps ? 1 : undefined;
+      const entry: Side | undefined = Math.abs(s.from) < eps ? 0 : Math.abs(s.from - len) < eps ? 1 : undefined;
+      const linked = exit !== undefined && entry !== undefined &&
+        (this.links.get(key(p.ne, exit)) ?? []).some(([ne, side]) => ne === s.ne && side === entry);
+      const contiguous = Math.abs(p.startDistance + Math.abs(p.to - p.from) - s.startDistance) < eps;
+      if (!linked || !contiguous) out.push(i);
+    });
+    return out;
+  }
+
+  /**
    * Shortest route from any interval in `from` to any interval in `to`.
    * Intervals may be points (start === end). The route leaves the start
    * interval at the edge facing the direction of travel and stops at the
