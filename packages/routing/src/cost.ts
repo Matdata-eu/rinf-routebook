@@ -23,6 +23,7 @@ export interface TrackPreferenceOptions {
    * Running tracks slower than this (km/h, era:maximumPermittedSpeed) cost `slowSpeed / speed` per
    * metre, so a route keeps to the through track of a station rather than a slow loop or platform
    * track of about the same length. Tracks at or above it, and tracks without a speed, cost 1.
+   * The factor never exceeds `sidingFactor`: a running track is never worse than a siding.
    * Default 80; 0 turns it off.
    */
   slowSpeed?: number;
@@ -47,7 +48,8 @@ export function trackPreferenceCostModel(tracks: Track[], opts: TrackPreferenceO
       // running wins when an element is shared
       if (t.kind === "running" || !kind.has(ne)) kind.set(ne, t.kind);
       if (t.kind !== "running") continue;
-      const f = t.speed !== undefined && t.speed > 0 && t.speed < slowSpeed ? slowSpeed / t.speed : 1;
+      const slow = t.speed !== undefined && t.speed > 0 && t.speed < slowSpeed;
+      const f = slow ? Math.min(slowSpeed / t.speed!, Math.max(sidingFactor, 1)) : 1;
       running.set(ne, Math.min(f, running.get(ne) ?? Infinity));
     }
   }
