@@ -121,10 +121,12 @@ export class RoutingGraph {
       const p = route.steps[i - 1]!;
       const pLen = this.lengths.get(p.ne), len = this.lengths.get(s.ne);
       if (pLen === undefined || len === undefined) return out.push(i);
-      const exit: Side | undefined = Math.abs(p.to) < eps ? 0 : Math.abs(p.to - pLen) < eps ? 1 : undefined;
-      const entry: Side | undefined = Math.abs(s.from) < eps ? 0 : Math.abs(s.from - len) < eps ? 1 : undefined;
-      const linked = exit !== undefined && entry !== undefined &&
-        (this.links.get(key(p.ne, exit)) ?? []).some(([ne, side]) => ne === s.ne && side === entry);
+      // an offset names both ends of an element shorter than eps, so each end it can be is tried
+      const ends = (offset: number, length: number): Side[] =>
+        ([[0, 0], [1, length]] as const).filter(([, at]) => Math.abs(offset - at) < eps).map(([side]) => side);
+      const entries = ends(s.from, len);
+      const linked = ends(p.to, pLen).some((exit) =>
+        (this.links.get(key(p.ne, exit)) ?? []).some(([ne, side]) => ne === s.ne && entries.includes(side)));
       const contiguous = Math.abs(p.startDistance + Math.abs(p.to - p.from) - s.startDistance) < eps;
       if (!linked || !contiguous) out.push(i);
     });

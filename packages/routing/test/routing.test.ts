@@ -128,6 +128,36 @@ describe("RoutingGraph", () => {
     expect(g.breaks(wrongEnd)).toEqual([1]);
   });
 
+  it("never makes a very slow running track worse than a siding", () => {
+    // 5 km/h would cost x16 uncapped and send the route over the siding (x5)
+    const yard: Topology = {
+      netElements: [{ id: "in", length: 100 }, { id: "crawl", length: 500 }, { id: "siding", length: 500 }, { id: "out", length: 100 }],
+      netRelations: [rel("in", false, "crawl", true), rel("in", false, "siding", true), rel("crawl", false, "out", true), rel("siding", false, "out", true)],
+    };
+    const yardTracks: Track[] = [
+      { id: "r", kind: "running", label: "1", speed: 100, elements: ["in", "out"], partOf: [] },
+      { id: "c", kind: "running", label: "2", speed: 5, elements: ["crawl"], partOf: [] },
+      { id: "s", kind: "siding", label: "3", elements: ["siding"], partOf: [] },
+    ];
+    const model = trackPreferenceCostModel(yardTracks);
+    expect(model.factor("crawl")).toBe(5);
+    expect(model.factor("crawl")).toBeLessThanOrEqual(model.factor("siding"));
+  });
+
+  it("accepts a route over an element of zero length", () => {
+    // both ends of a zero-length element sit at offset 0: the check must not read its far end as the near one
+    const tiny: Topology = {
+      netElements: [{ id: "P", length: 100 }, { id: "Z", length: 0 }, { id: "Q", length: 100 }],
+      netRelations: [rel("P", false, "Z", true), rel("Z", false, "Q", true)],
+    };
+    const tg = new RoutingGraph(tiny);
+    for (const [a, b] of [["P", "Q"], ["Q", "P"]] as const) {
+      const r = tg.route(point(a, 50), point(b, 50))!;
+      expect(r.steps.map((s) => s.ne)).toEqual([a, "Z", b]);
+      expect(tg.breaks(r)).toEqual([]);
+    }
+  });
+
   it("follows one-way relations (navigability AB / BA) in their direction only", () => {
     const oneWay = (direction: "AB" | "BA"): Topology => ({
       netElements: [{ id: "P", length: 100 }, { id: "Q", length: 100 }],
